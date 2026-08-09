@@ -396,6 +396,7 @@ async function startTraining() {
 function initQuizScreen() {
     showScreen("quiz");
     $("#feedback-area").style.display = "none";
+    AppState.essayQuestion = null;  // 清空残留作文题，防止答疑/新练习误走作文判分
     renderCurrentQuestion();
 }
 
@@ -464,6 +465,11 @@ function renderCurrentQuestion() {
         renderFillBlankQuestion(q);
         return;
     }
+
+    // 复位为普通输入模式（防止作文/填空模式残留到普通练习题，M7 bug 修复）
+    show($("#answer-area-normal"));
+    hide($("#answer-area-essay"));
+    hide($("#answer-area-fillblank"));
 
     // 场景
     $("#quiz-scene").textContent = q.scene ? `📖 ${q.scene}` : "";
@@ -1069,6 +1075,25 @@ async function submitEssay() {
         });
 
         renderEssayFeedback(result.feedback);
+
+        // 自动收录错题（与翻译/填空同标准：score<5 或存在核心错误 ❌）
+        const fb = result.feedback;
+        if (fb.score < 5 || (fb.error_parts && fb.error_parts.some(e => (e.level || "").includes("❌")))) {
+            await collectWrongAnswer(
+                {
+                    grammar_point: "综合作文",
+                    scene: AppState.essayQuestion.scene,
+                    chinese: AppState.essayQuestion.chinese,
+                    reference_answer: AppState.essayQuestion.reference_answer,
+                    is_extra: false,
+                    extra_level: null,
+                    difficulty: 4,
+                    is_essay: true,
+                },
+                userAnswer,
+                fb
+            );
+        }
     } catch (err) {
         alert(`批改失败：${err.message}`);
     } finally {
@@ -2699,6 +2724,10 @@ function showQaScreen() {
                 <p id="qa-drop-text">拖拽文件到这里，或点击选择</p>
                 <span class="qa-drop-hint" id="qa-drop-hint">支持 PDF / PNG / JPG / WebP，最大 10 MB</span>
                 <input type="file" id="qa-file-input" accept=".pdf,image/png,image/jpg,image/jpeg,image/webp" hidden>
+            </div>
+            <div class="qa-media-notice" id="qa-media-note">
+                <i data-lucide="alert-triangle" style="width:16px;height:16px"></i>
+                <p>应用自带识别功能准确率较低，建议使用外置识别工具</p>
             </div>
             <p class="input-hint" id="qa-file-status"></p>
         </div>
