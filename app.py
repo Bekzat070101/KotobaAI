@@ -939,14 +939,15 @@ def handle_vocabulary():
 @app.route("/api/knowledge_base", methods=["GET"])
 def list_textbooks():
     """返回教材列表和课程索引。"""
-    index = load_json("knowledge_base/index.json")
+    # 内置教材走 resource_path：PyInstaller 打包后位于 _MEIPASS，不能用相对 cwd 路径
+    index = load_json(resource_path("knowledge_base/index.json"))
     return jsonify(index)
 
 
 @app.route("/api/knowledge_base/<volume_id>", methods=["GET"])
 def get_textbook_volume(volume_id):
     """加载指定教材分册的全部课程数据。"""
-    index = load_json("knowledge_base/index.json")
+    index = load_json(resource_path("knowledge_base/index.json"))
     file_path = None
     for textbook in index.get("textbooks", []):
         for vol in textbook.get("volumes", []):
@@ -957,7 +958,7 @@ def get_textbook_volume(volume_id):
     if not file_path:
         return jsonify({"error": "教材不存在"}), 404
 
-    full_path = os.path.join("knowledge_base", file_path)
+    full_path = os.path.join(resource_path("knowledge_base"), file_path)
     data = load_json(full_path, None)
     if data is None:
         return jsonify({"error": "教材文件不存在或格式错误"}), 404

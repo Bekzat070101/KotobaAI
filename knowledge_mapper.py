@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import sys
 from collections import Counter
 from datetime import datetime
 
@@ -23,6 +24,13 @@ FUZZY_THRESHOLD = 0.5          # 2-gram 重叠度 ≥ 此值判为模糊候选
 _WHITESPACE_RE = re.compile(r"\s+")
 _NGRAM_STRIP_RE = re.compile(r"[()（）]")
 _SOURCE_PRIORITY = {"textbook": 0, "practice": 1, "qa_import": 2, "ai_inferred": 3}
+
+
+def _resource_path(relative_path):
+    """获取内置资源绝对路径（PyInstaller 打包后位于 _MEIPASS）。"""
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
 # ---------- 工具 ----------
@@ -238,12 +246,12 @@ def normalize_point(name: str) -> str:
 
 def load_textbook_grammar() -> list:
     """遍历教材索引，收集全部语法点 → [{point, explanation, textbook_ref}]。"""
-    index = load_json("knowledge_base/index.json", {"textbooks": []})
+    index = load_json(_resource_path("knowledge_base/index.json"), {"textbooks": []})
     result = []
     for tb in index.get("textbooks", []):
         tb_id = tb.get("id", "")
         for vol in tb.get("volumes", []):
-            file_path = os.path.join("knowledge_base", vol.get("file", ""))
+            file_path = os.path.join(_resource_path("knowledge_base"), vol.get("file", ""))
             data = load_json(file_path, None)
             if not data:
                 continue
