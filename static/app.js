@@ -5,7 +5,7 @@
 
 // --- 全局状态 ---
 const AppState = {
-    config: { api_key: "", level: "N3", model: "deepseek-chat" },
+    config: { api_key: "", level: "N3", model: "deepseek-chat", learning_goal: "" },
     questions: [],          // 全部题目
     currentIndex: 0,        // 当前题目索引
     records: [],            // 答题记录
@@ -15,6 +15,8 @@ const AppState = {
     totalAnswered: 0,       // 已答题数（含加练/换题）
     baseTotal: 0,           // 原始题目总数（进度条分母）
     historyDate: null,      // 查看历史详情时的日期
+    questionType: "translation",  // M4: 题型 "translation" | "fill_blank" | "mixed"
+    fillblankSelected: null,      // M4: 填空选择题选中的选项索引
 };
 
 // --- 工具函数 ---
@@ -317,6 +319,17 @@ function showMainScreen() {
         };
     });
 
+    // 题型选择（M4）
+    const qtype = AppState.questionType || "translation";
+    $$(".qtype-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.qtype === qtype);
+        btn.onclick = () => {
+            $$(".qtype-btn").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            AppState.questionType = btn.dataset.qtype;
+        };
+    });
+
     // 字数统计
     $("#notes-input").oninput = updateCharCount;
     $("#vocab-input").oninput = updateVocabCharCount;
@@ -342,7 +355,7 @@ async function startTraining() {
     try {
         const result = await api("/api/generate_questions", {
             method: "POST",
-            body: JSON.stringify({ notes, level, vocabulary: vocabText, textbook_vocab: currentBookVocab }),
+            body: JSON.stringify({ notes, level, vocabulary: vocabText, textbook_vocab: currentBookVocab, question_type: AppState.questionType }),
         });
 
         if (!result.success || !result.data) {
@@ -442,6 +455,12 @@ function renderCurrentQuestion() {
     // 语法点
     $("#grammar-tag").textContent = q.grammar_point || "";
 
+    // --- 题型分支（M4）---
+    if (q.question_type === "fill_blank") {
+        renderFillBlankQuestion(q);
+        return;
+    }
+
     // 场景
     $("#quiz-scene").textContent = q.scene ? `📖 ${q.scene}` : "";
 
@@ -486,6 +505,131 @@ function renderCurrentQuestion() {
     // 给新渲染的卡片加发光
     if (typeof initBorderGlowCards === 'function') {
         setTimeout(initBorderGlowCards, 100);
+    }
+}
+
+// --- 填空选择题渲染（M4）---
+function renderFillBlankQuestion(q) {
+    // 显示 stem 含高亮空白的句子
+    $("#quiz-chinese").innerHTML = (q.stem || "").replace(
+        /([＿_]+)/g,
+        '<span class="fillblank-blank">$1</span>'
+    );
+    $("#quiz-scene").textContent = q.scene ? `📖 ${q.scene}` : "";
+
+    // 隐藏翻译题输入区，显示选择题区
+    hide($("#answer-area-normal"));
+    hide($("#answer-area-essay"));
+    show($("#answer-area-fillblank"));
+
+    // 渲染 4 个选项按钮
+    const options = q.options || [];
+    const letters = ["A", "B", "C", "D"];
+    AppState.fillblankSelected = null;
+    $("#fillblank-options").innerHTML = options.map((opt, i) => `
+        <div class="fillblank-option" data-index="${i}">
+            <span class="fillblank-option-letter">${letters[i]}</span>
+            <span class="fillblank-option-text">${escapeHtml(opt)}</span>
+        </div>
+    `).join("");
+
+    // 选项点击处理
+    const submitBtn = $("#btn-fillblank-submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "请选择答案";
+    $$("#fillblank-options .fillblank-option").forEach(el => {
+        el.onclick = () => {
+            $$("#fillblank-options .fillblank-option").forEach(e => e.classList.remove("selected"));
+            el.classList.add("selected");
+            AppState.fillblankSelected = parseInt(el.dataset.index);
+            submitBtn.disabled = false;
+            submitBtn.textContent = "确认选择";
+        };
+    });
+
+    // 提交按钮
+    submitBtn.onclick = submitFillBlankAnswer;
+
+    // 隐藏反馈
+    const fbPanel = $("#feedback-area"); if (fbPanel) fbPanel.style.display = "none";
+    hide($("#badge-extra"));
+    hide($("#badge-difficulty"));
+
+    // 提示处理
+    if (q.hints && q.hints.length > 0) {
+        show($("#quiz-hints"));
+        $("#hints-content").innerHTML = q.hints.map(h => `<span class="hint-item">${h}</span>`).join("");
+        hide($("#hints-content"));
+        $("#hints-toggle").textContent = "💡 词汇提示 ▾";
+    } else {
+        hide($("#quiz-hints"));
+    }
+    $("#hints-toggle").onclick = () => {
+        const content = $("#hints-content");
+        const toggle = $("#hints-toggle");
+        if (content.style.display === "none") {
+            show(content);
+            toggle.textContent = "💡 词汇提示 ▴";
+        } else {
+            hide(content);
+            toggle.textContent = "💡 词汇提示 ▾";
+        }
+    };
+}
+
+// --- 填空选择题提交（M4）---
+async function submitFillBlankAnswer() {
+    if (AppState.fillblankSelected === null) return;
+    const q = getCurrentQuestion();
+    if (!q) return;
+
+    const btn = $("#btn-fillblank-submit");
+    btn.disabled = true;
+    btn.textContent = "批改中...";
+
+    try {
+        const result = await api("/api/grade_answer", {
+            method: "POST",
+            body: JSON.stringify({
+                question: q,
+                user_answer: String(AppState.fillblankSelected),
+                level: AppState.config.level,
+                action: "grade",
+            }),
+        });
+        if (!result.success || !result.feedback) throw new Error("批改失败，请重试");
+
+        AppState.records.push({
+            question: q,
+            user_answer: String(AppState.fillblankSelected),
+            feedback: result.feedback,
+            timestamp: new Date().toISOString(),
+        });
+        AppState.totalAnswered++;
+
+        // 高亮正确/错误选项
+        const fb = result.feedback;
+        const correctIdx = fb.correct_option;
+        const selectedIdx = fb.selected_option;
+        $$("#fillblank-options .fillblank-option").forEach(el => {
+            const idx = parseInt(el.dataset.index);
+            if (idx === correctIdx) el.classList.add("fillblank-correct");
+            if (idx === selectedIdx && idx !== correctIdx) el.classList.add("fillblank-wrong");
+        });
+
+        renderFeedback(result.feedback);
+
+        // 自动收录错题
+        if (fb.score < 5 || (fb.error_parts && fb.error_parts.some(e => (e.level || "").includes("❌")))) {
+            await collectWrongAnswer(q, String(AppState.fillblankSelected), fb);
+        }
+
+        await saveProgress();
+    } catch (err) {
+        alert(`批改失败：${err.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "确认选择";
     }
 }
 
@@ -702,6 +846,14 @@ function moveToNext() {
     AppState.currentIndex++;
 
     const fb = $("#feedback-area"); if (fb) fb.style.display = "none";
+
+    // 重置答题区（M4：所有题型回到默认状态）
+    show($("#answer-area-normal"));
+    hide($("#answer-area-essay"));
+    hide($("#answer-area-fillblank"));
+    $("#answer-input").value = "";
+    AppState.fillblankSelected = null;
+
     const baseCompleted = AppState.currentIndex >= AppState.baseTotal;
     const allCompleted = AppState.currentIndex >= AppState.questions.length;
 
@@ -1213,7 +1365,7 @@ async function initHistoryScreen() {
         alert(`加载历史失败：${err.message}`);
     }
 
-    $("#btn-history-back").onclick = showProfileScreen;
+    $("#btn-history-back").onclick = showSettingsScreen;
 }
 
 async function showHistoryDetail(date) {
@@ -1506,7 +1658,7 @@ async function initWrongBookScreen() {
             });
         }
     } catch (err) { hideLoading(); alert(`加载失败：${err.message}`); }
-    $("#btn-wrong-back").onclick = showProfileScreen;
+    $("#btn-wrong-back").onclick = showSettingsScreen;
 }
 
 function showWrongDetail(item) {
@@ -1590,6 +1742,10 @@ function init() {
         }
     });
 
+    // 首页公告卡片 → 公告弹窗
+    const announceCard = $("#guide-announce");
+    if (announceCard) announceCard.onclick = showAnnounceModal;
+
     // 启动
     initGuideScreen();
 }
@@ -1642,8 +1798,8 @@ function initDock() {
             switch (screen) {
                 case 'guide': showGuideScreen(); break;
                 case 'main': showMainScreen(); break;
+                case 'qa': showQaScreen(); break;
                 case 'settings': showSettingsScreen(); break;
-                case 'profile': showProfileScreen(); break;
             }
         });
     });
@@ -1674,65 +1830,152 @@ function showSettingsScreen() {
     const heroTitle = $("#screen-settings .setup-hero h1");
     if (heroTitle) heroTitle.textContent = "设置";
     const heroDesc = $("#screen-settings .setup-desc");
-    if (heroDesc) heroDesc.textContent = "管理 API Key、模型与外观";
+    if (heroDesc) heroDesc.textContent = "API Key · 学习目标 · 学习数据 · 外观";
 
     const card = $("#screen-settings .setup-card");
     if (!card) return;
     card.innerHTML = `
-        <div class="settings-list">
-            <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:var(--space-md);padding-top:var(--space-sm)">
-                <div class="settings-item-title" style="margin-bottom:2px"><i data-lucide="key" style="width:18px;height:18px;color:var(--color-primary)"></i> DeepSeek API Key</div>
-                <input type="password" id="settings-apikey-input" class="input" placeholder="sk-..." autocomplete="off" style="width:100%">
-                <div class="settings-item-desc">在 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">DeepSeek 平台</a> 获取，Key 仅保存在本地，不会上传</div>
-                <div style="display:flex;gap:8px;justify-content:flex-end">
-                    <button class="btn btn-primary btn-sm" id="btn-save-apikey">保存</button>
+        <div class="settings-body">
+            <!-- 左列：学习数据（宽） -->
+            <div class="settings-learning">
+                <div class="settings-section-title">📊 学习数据</div>
+                <div class="checkin-calendar card" id="checkin-calendar" style="margin-bottom:var(--space-md)">
+                    <div class="checkin-cal-header">
+                        <div class="checkin-stats-row">
+                            <div class="checkin-stat-badge">
+                                <i data-lucide="flame" style="width:22px;height:22px;color:var(--color-warning)"></i>
+                                <div class="checkin-stat-info">
+                                    <span class="checkin-stat-num" id="cal-streak-num">--</span>
+                                    <span class="checkin-stat-label">连续学习</span>
+                                </div>
+                            </div>
+                            <div class="checkin-stat-badge">
+                                <i data-lucide="calendar-check" style="width:22px;height:22px;color:var(--color-primary)"></i>
+                                <div class="checkin-stat-info">
+                                    <span class="checkin-stat-num" id="cal-month-num">--</span>
+                                    <span class="checkin-stat-label">本月累计</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="checkin-month-nav">
+                            <button class="checkin-nav-btn" id="cal-prev-month"><i data-lucide="chevron-left" style="width:16px;height:16px"></i></button>
+                            <span class="checkin-month-label" id="cal-month-label">2026年8月</span>
+                            <button class="checkin-nav-btn" id="cal-next-month"><i data-lucide="chevron-right" style="width:16px;height:16px"></i></button>
+                        </div>
+                    </div>
+                    <div class="checkin-weekdays">
+                        <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+                    </div>
+                    <div class="checkin-grid" id="checkin-grid"></div>
                 </div>
-                <p id="apikey-error" class="error-text" style="display:none;"></p>
+                <div class="review-plan card" id="review-plan" style="margin-bottom:var(--space-md)">
+                    <div class="review-plan-header">
+                        <i data-lucide="brain" style="width:18px;height:18px;color:var(--color-primary)"></i>
+                        <span>复习计划</span>
+                        <span class="review-plan-badge" id="review-plan-badge" style="display:none"></span>
+                    </div>
+                    <div class="review-plan-list" id="review-plan-list">
+                        <p class="review-plan-empty">加载中...</p>
+                    </div>
+                </div>
+                <div class="settings-list">
+                    <div class="settings-item clickable" id="settings-wrong">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="edit-3" style="width:18px;height:18px"></i> 错题本</div>
+                            <div class="settings-item-desc">查看和复习做错的题目</div>
+                        </div>
+                        <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
+                    </div>
+                    <div class="settings-item clickable" id="settings-history">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="clipboard-list" style="width:18px;height:18px"></i> 历史记录</div>
+                            <div class="settings-item-desc">查看过往练习记录</div>
+                        </div>
+                        <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="database" style="width:18px;height:18px"></i> 学习数据</div>
+                            <div class="settings-item-desc">导出全部学习数据，更新版本或换机时导入恢复</div>
+                        </div>
+                        <div class="settings-data-actions">
+                            <button class="btn btn-secondary btn-sm" id="btn-data-export"><i data-lucide="download" style="width:14px;height:14px"></i> 导出</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-data-import"><i data-lucide="upload" style="width:14px;height:14px"></i> 导入</button>
+                            <input type="file" id="data-import-input" accept=".json,application/json" style="display:none">
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="settings-item">
-                <div class="settings-item-info">
-                    <div class="settings-item-title"><i data-lucide="cpu" style="width:18px;height:18px"></i> 使用模型</div>
-                    <div class="settings-item-desc">当前仅支持 DeepSeek V4</div>
+            <!-- 右列：功能设置（窄） -->
+            <div class="settings-func">
+                <div class="settings-section-title">⚙️ 功能设置</div>
+                <div class="settings-list">
+                    <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:var(--space-md);padding-top:var(--space-sm)">
+                        <div class="settings-item-title" style="margin-bottom:2px"><i data-lucide="key" style="width:18px;height:18px;color:var(--color-primary)"></i> DeepSeek API Key</div>
+                        <input type="password" id="settings-apikey-input" class="input" placeholder="sk-..." autocomplete="off" style="width:100%">
+                        <div class="settings-item-desc">在 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">DeepSeek 平台</a> 获取，Key 仅保存在本地，不会上传</div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end">
+                            <button class="btn btn-primary btn-sm" id="btn-save-apikey">保存</button>
+                        </div>
+                        <p id="apikey-error" class="error-text" style="display:none;"></p>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="target" style="width:18px;height:18px"></i> 学习目标</div>
+                        </div>
+                        <select class="input" id="settings-learning-goal" style="width:104px;flex-shrink:0;padding:6px 8px;font-size:13px">
+                            <option value="">不限</option>
+                            <option value="兴趣">兴趣</option>
+                            <option value="旅游">旅游</option>
+                            <option value="JLPT">JLPT</option>
+                            <option value="高考">高考</option>
+                            <option value="考研">考研</option>
+                        </select>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="cpu" style="width:18px;height:18px"></i> 使用模型</div>
+                            <div class="settings-item-desc">当前仅支持 DeepSeek V4</div>
+                        </div>
+                        <span style="font-size:12px;font-weight:700;color:var(--color-primary);background:var(--color-primary-tint,#FFEBEB);padding:3px 12px;border-radius:var(--radius-full);white-space:nowrap">开发中</span>
+                    </div>
+                    <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:var(--space-sm);padding-top:var(--space-sm)">
+                        <div class="settings-item-title"><i data-lucide="sun-moon" style="width:18px;height:18px"></i> 显示模式</div>
+                        <div class="theme-toggle">
+                            <button class="theme-option" data-theme-val="light">☀️ 浅色</button>
+                            <button class="theme-option" data-theme-val="auto">🔄 自动</button>
+                            <button class="theme-option" data-theme-val="dark">🌙 深色</button>
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="trash-2" style="width:18px;height:18px"></i> 清除数据</div>
+                            <div class="settings-item-desc">清除 API Key、答题进度、知识库等所有本地数据</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" id="btn-clear-data">清除</button>
+                    </div>
+                    <div class="settings-item clickable" id="settings-privacy">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="shield" style="width:18px;height:18px"></i> 隐私政策</div>
+                            <div class="settings-item-desc">了解我们如何保护你的数据</div>
+                        </div>
+                        <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
+                    </div>
+                    <div class="settings-item clickable" id="settings-guide">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="book-open" style="width:18px;height:18px"></i> 使用说明</div>
+                            <div class="settings-item-desc">快速上手 KOTOBA·AI 的使用流程</div>
+                        </div>
+                        <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
+                    </div>
+                    <div class="settings-item clickable" id="settings-roadmap">
+                        <div class="settings-item-info">
+                            <div class="settings-item-title"><i data-lucide="map" style="width:18px;height:18px"></i> 开发路线图</div>
+                            <div class="settings-item-desc">查看未来版本的开发计划</div>
+                        </div>
+                        <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
+                    </div>
                 </div>
-                <span style="font-size:12px;font-weight:700;color:var(--color-primary);background:var(--color-primary-tint,#FFEBEB);padding:3px 12px;border-radius:var(--radius-full);white-space:nowrap">开发中</span>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-info">
-                    <div class="settings-item-title"><i data-lucide="sun-moon" style="width:18px;height:18px"></i> 显示模式</div>
-                </div>
-                <div class="theme-toggle">
-                    <button class="theme-option" data-theme-val="light">☀️ 浅色</button>
-                    <button class="theme-option" data-theme-val="auto">🔄 自动</button>
-                    <button class="theme-option" data-theme-val="dark">🌙 深色</button>
-                </div>
-            </div>
-            <div class="settings-item">
-                <div class="settings-item-info">
-                    <div class="settings-item-title"><i data-lucide="trash-2" style="width:18px;height:18px"></i> 清除数据</div>
-                    <div class="settings-item-desc">清除 API Key、答题进度、知识库等所有本地数据</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" id="btn-clear-data">清除</button>
-            </div>
-            <div class="settings-item clickable" id="settings-privacy">
-                <div class="settings-item-info">
-                    <div class="settings-item-title"><i data-lucide="shield" style="width:18px;height:18px"></i> 隐私政策</div>
-                    <div class="settings-item-desc">了解我们如何保护你的数据</div>
-                </div>
-                <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
-            </div>
-            <div class="settings-item clickable" id="settings-guide">
-                <div class="settings-item-info">
-                    <div class="settings-item-title"><i data-lucide="book-open" style="width:18px;height:18px"></i> 使用说明</div>
-                    <div class="settings-item-desc">快速上手 KOTOBA·AI 的使用流程</div>
-                </div>
-                <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
-            </div>
-            <div class="settings-item clickable" id="settings-roadmap">
-                <div class="settings-item-info">
-                    <div class="settings-item-title"><i data-lucide="map" style="width:18px;height:18px"></i> 开发路线图</div>
-                    <div class="settings-item-desc">查看未来版本的开发计划</div>
-                </div>
-                <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
             </div>
         </div>
     `;
@@ -1764,6 +2007,18 @@ function showSettingsScreen() {
         }
     };
 
+    // 学习目标下拉（M4）
+    const goalSelect = $("#settings-learning-goal");
+    if (goalSelect) {
+        goalSelect.value = AppState.config.learning_goal || "";
+        goalSelect.onchange = async () => {
+            try {
+                await saveConfig({ learning_goal: goalSelect.value });
+                AppState.config.learning_goal = goalSelect.value;
+            } catch { /* 静默 */ }
+        };
+    }
+
     // 主题切换按钮（作用域限定在设置页）
     const currentTheme = getTheme();
     document.querySelectorAll('#screen-settings .theme-option').forEach(btn => {
@@ -1789,6 +2044,78 @@ function showSettingsScreen() {
         };
     }
 
+    // 错题本入口（M4：从个人页迁移）
+    const wrongEntry = $("#settings-wrong");
+    if (wrongEntry) wrongEntry.onclick = initWrongBookScreen;
+
+    // 历史记录入口（M4：从个人页迁移）
+    const historyEntry = $("#settings-history");
+    if (historyEntry) historyEntry.onclick = initHistoryScreen;
+
+    // 学习数据导出 / 导入
+    const exportBtn = $("#btn-data-export");
+    if (exportBtn) exportBtn.onclick = async () => {
+        // pywebview 原生环境：弹出系统保存对话框，让用户自选导出位置
+        if (window.pywebview && window.pywebview.api
+            && typeof window.pywebview.api.export_user_data_native === "function") {
+            try {
+                const r = await window.pywebview.api.export_user_data_native();
+                if (r && r.success) {
+                    alert("学习数据已导出到：\n" + r.path);
+                }
+                // 用户取消或不成功则不打扰
+            } catch (e) {
+                alert("导出失败：" + ((e && e.message) || e));
+            }
+            return;
+        }
+        // 浏览器模式降级：直接触发下载
+        window.open("/api/data/export", "_blank");
+    };
+
+    const importBtn = $("#btn-data-import");
+    const importInput = $("#data-import-input");
+    if (importBtn && importInput) {
+        importBtn.onclick = () => importInput.click();
+        importInput.onchange = async () => {
+            const file = importInput.files && importInput.files[0];
+            importInput.value = "";
+            if (!file) return;
+            if (!/\.json$/i.test(file.name)) {
+                alert("请选择 KOTOBA·AI 导出的 .json 备份文件");
+                return;
+            }
+            let parsed;
+            try {
+                parsed = JSON.parse(await file.text());
+            } catch {
+                alert("文件解析失败，不是有效的备份文件");
+                return;
+            }
+            if (!parsed || parsed.app !== "KOTOBA-AI") {
+                alert("这不是 KOTOBA·AI 的备份文件");
+                return;
+            }
+            if (!confirm("导入将把备份中的学习数据合并到本机（同名记录将被覆盖），是否继续？")) return;
+            try {
+                const res = await fetch("/api/data/import", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(parsed),
+                });
+                const j = await res.json();
+                if (j.success) {
+                    alert(j.message || "导入成功，正在刷新…");
+                    location.reload();
+                } else {
+                    alert(j.error || "导入失败");
+                }
+            } catch {
+                alert("导入失败，请重试");
+            }
+        };
+    }
+
     // 隐私政策
     const privacyBtn = $("#settings-privacy");
     if (privacyBtn) privacyBtn.onclick = showPrivacyScreen;
@@ -1801,6 +2128,12 @@ function showSettingsScreen() {
     const roadmapBtn = $("#settings-roadmap");
     if (roadmapBtn) roadmapBtn.onclick = showRoadmapModal;
 
+    // 加载打卡数据并渲染日历（M4：从个人页迁移）
+    renderCheckinCalendar();
+
+    // 加载复习计划（M4：从个人页迁移）
+    loadReviewPlan();
+
     // 版本行
     const versionRow = document.createElement("div");
     versionRow.className = "settings-item";
@@ -1808,7 +2141,7 @@ function showSettingsScreen() {
     versionRow.style.justifyContent = "center";
     versionRow.innerHTML = `
         <div class="settings-item-info" style="align-items:center">
-            <span style="font-size:12px;color:var(--text-tertiary)">KOTOBA·AI v3.0.0-beta · 黏土更新 · MIT License</span>
+            <span style="font-size:12px;color:var(--text-tertiary)">KOTOBA·AI Beta v4.0 · 罗盘更新 · GPL-3.0</span>
         </div>
     `;
     card.appendChild(versionRow);
@@ -1821,113 +2154,6 @@ function showSettingsScreen() {
     }
 }
 
-// 个人页面
-function showProfileScreen() {
-    showScreen("profile");
-    setDockActive("profile");
-
-    // hero 区域（作用域限定在个人页）
-    const heroIcon = $("#screen-profile .setup-icon-wrap");
-    if (heroIcon) heroIcon.innerHTML = '<i data-lucide="user" style="width:40px;height:40px"></i>';
-    const heroTitle = $("#screen-profile .setup-hero h1");
-    if (heroTitle) heroTitle.textContent = "个人中心";
-    const heroDesc = $("#screen-profile .setup-desc");
-    if (heroDesc) heroDesc.textContent = "打卡日历 · 复习计划 · 学习数据";
-
-    // 替换 card 内容（先替换，再操作，避免访问已销毁元素）
-    const card = $("#screen-profile .setup-card");
-    if (!card) return;
-    card.innerHTML = `
-        <div class="profile-layout">
-            <div class="profile-main">
-                <!-- 打卡日历 -->
-                <div class="checkin-calendar" id="checkin-calendar">
-                    <div class="checkin-cal-header">
-                        <div class="checkin-stats-row">
-                            <div class="checkin-stat-badge">
-                                <i data-lucide="flame" style="width:22px;height:22px;color:var(--color-warning)"></i>
-                                <div class="checkin-stat-info">
-                                    <span class="checkin-stat-num" id="cal-streak-num">--</span>
-                                    <span class="checkin-stat-label">连续学习</span>
-                                </div>
-                            </div>
-                            <div class="checkin-stat-badge">
-                                <i data-lucide="calendar-check" style="width:22px;height:22px;color:var(--color-primary)"></i>
-                                <div class="checkin-stat-info">
-                                    <span class="checkin-stat-num" id="cal-month-num">--</span>
-                                    <span class="checkin-stat-label">本月累计</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="checkin-month-nav">
-                            <button class="checkin-nav-btn" id="cal-prev-month"><i data-lucide="chevron-left" style="width:16px;height:16px"></i></button>
-                            <span class="checkin-month-label" id="cal-month-label">2026年7月</span>
-                            <button class="checkin-nav-btn" id="cal-next-month"><i data-lucide="chevron-right" style="width:16px;height:16px"></i></button>
-                        </div>
-                    </div>
-                    <div class="checkin-weekdays">
-                        <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
-                    </div>
-                    <div class="checkin-grid" id="checkin-grid"></div>
-                </div>
-
-                <!-- 复习计划 -->
-                <div class="review-plan" id="review-plan">
-                    <div class="review-plan-header">
-                        <i data-lucide="brain" style="width:18px;height:18px;color:var(--color-primary)"></i>
-                        <span>复习计划</span>
-                        <span class="review-plan-badge" id="review-plan-badge" style="display:none"></span>
-                    </div>
-                    <div class="review-plan-list" id="review-plan-list">
-                        <p class="review-plan-empty">加载中...</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="profile-side">
-                <div class="card profile-entry" id="profile-wrong">
-                    <div class="guide-bento-icon" style="--glow:var(--color-primary)">
-                        <i data-lucide="edit-3" style="width:22px;height:22px"></i>
-                    </div>
-                    <div class="settings-item-info">
-                        <div class="settings-item-title">错题本</div>
-                        <div class="settings-item-desc">查看和复习做错的题目</div>
-                    </div>
-                    <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
-                </div>
-                <div class="card profile-entry" id="profile-history">
-                    <div class="guide-bento-icon" style="--glow:var(--color-info)">
-                        <i data-lucide="clipboard-list" style="width:22px;height:22px"></i>
-                    </div>
-                    <div class="settings-item-info">
-                        <div class="settings-item-title">历史记录</div>
-                        <div class="settings-item-desc">查看过往练习记录</div>
-                    </div>
-                    <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
-                </div>
-            </div>
-        </div>
-    `;
-    refreshIcons();
-
-    // 加载打卡数据并渲染日历
-    renderCheckinCalendar();
-
-    // 加载复习计划
-    loadReviewPlan();
-
-    const wrongEntry = $("#screen-profile #profile-wrong");
-    if (wrongEntry) wrongEntry.onclick = initWrongBookScreen;
-    const historyEntry = $("#screen-profile #profile-history");
-    if (historyEntry) historyEntry.onclick = initHistoryScreen;
-
-    // 返回按钮（不在 card 内，始终安全）
-    const backBtn = $("#btn-profile-back");
-    if (backBtn) {
-        backBtn.style.display = "";
-        backBtn.onclick = showMainScreen;
-    }
-}
 
 // 隐私政策弹窗
 function showPrivacyScreen() {
@@ -1957,6 +2183,16 @@ function showRoadmapModal() {
     $("#btn-roadmap-close").onclick = () => hide($("#modal-roadmap"));
     $("#modal-roadmap").onclick = (e) => {
         if (e.target === $("#modal-roadmap")) hide($("#modal-roadmap"));
+    };
+}
+
+// 公告弹窗
+function showAnnounceModal() {
+    show($("#modal-announce"));
+    refreshIcons();
+    $("#btn-announce-close").onclick = () => hide($("#modal-announce"));
+    $("#modal-announce").onclick = (e) => {
+        if (e.target === $("#modal-announce")) hide($("#modal-announce"));
     };
 }
 
@@ -2124,6 +2360,717 @@ async function loadReviewPlan() {
             };
         });
     } catch { /* 静默 */ }
+}
+
+// ============================================================
+// 答疑（QA）页面 — M2
+// ============================================================
+// 三入口互斥 / 输入质量门 / 三模式解析 / 去练习联动
+const QaState = {
+    entry: "text",          // image / pdf / text
+    content: "",
+    answerKey: "",
+    userAnswer: "",
+    result: null,           // 最近一次解析结果
+    detailShown: false,     // 是否已展开详细讲解
+    pendingVisible: false,  // 待确认池面板是否展开
+};
+
+const QA_TYPE_LABELS = {
+    single_question: "单题",
+    passage_with_blanks: "完形填空",
+    passage_only: "阅读文章",
+    not_japanese: "非日语",
+};
+const QA_TAG_TYPE_LABELS = {
+    grammar: "语法",
+    vocab_pair: "易混词",
+    comprehension: "理解",
+};
+const QA_MODE_HINTS = {
+    A: "将走：模式 A · 标准答案确定性判分（对错由代码对比，AI 不判分）",
+    B: "将走：模式 B · AI 评判你的答案",
+    C: "将走：模式 C · AI 解题（低置信，结果带 🤖 标注）",
+};
+
+function qaHasJapanese(text) {
+    return /[぀-ヿ]/.test(text || "") || /[々・]/.test(text || "");
+}
+function qaIsPureSymbols(content) {
+    const s = content.replace(/\s/g, "");
+    if (!s) return false; // 空输入由空检查拦截
+    // 不含任何文字/数字/假名/汉字 → 纯符号
+    return !/[぀-ヿ㐀-䶿一-鿿０-９Ａ-Ｚａ-ｚa-zA-Z0-9]/.test(s);
+}
+function qaIsPureNumbers(content) {
+    const s = content.replace(/\s/g, "");
+    if (!s) return false;
+    return s.replace(/[\d０-９]/g, "").trim() === "";
+}
+function qaValidate(content) {
+    // QA-2：输入质量门（零 token，不发起请求）
+    if (!content) return { ok: false, msg: "请先粘贴题目内容" };
+    if (qaIsPureSymbols(content)) return { ok: false, msg: "输入内容只包含符号，无法识别为题目" };
+    if (qaIsPureNumbers(content)) return { ok: false, msg: "输入内容只包含数字，无法识别为题目" };
+    if (!qaHasJapanese(content)) return { ok: false, msg: "未检测到日语内容（日文一般含假名）。请确认这是日语题目" };
+    return { ok: true };
+}
+function qaDetectMode(answerKey, userAnswer) {
+    if (answerKey && answerKey.trim()) return "A";
+    if (userAnswer && userAnswer.trim()) return "B";
+    return "C";
+}
+
+function showQaScreen() {
+    showScreen("qa");
+    setDockActive("qa");
+
+    const heroIcon = $("#screen-qa .setup-icon-wrap");
+    if (heroIcon) heroIcon.innerHTML = '<i data-lucide="messages-square" style="width:40px;height:40px"></i>';
+    const heroTitle = $("#screen-qa .setup-hero h1");
+    if (heroTitle) heroTitle.textContent = "答疑";
+    const heroDesc = $("#screen-qa .setup-desc");
+    if (heroDesc) heroDesc.textContent = "粘贴 / 上传日语题目，AI 帮你解析讲解、判分纠错";
+
+    const card = $("#qa-card");
+    if (!card) return;
+    card.innerHTML = `
+        <div class="qa-entry-grid" id="qa-entry-grid">
+            <div class="qa-entry-card" data-entry="image">
+                <div class="qa-entry-icon"><i data-lucide="camera" style="width:22px;height:22px"></i></div>
+                <span class="qa-entry-name">图片</span>
+                <small class="qa-entry-desc">拍照 / 截图</small>
+            </div>
+            <div class="qa-entry-card" data-entry="pdf">
+                <div class="qa-entry-icon"><i data-lucide="file-text" style="width:22px;height:22px"></i></div>
+                <span class="qa-entry-name">PDF</span>
+                <small class="qa-entry-desc">上传文档</small>
+            </div>
+            <div class="qa-entry-card active" data-entry="text">
+                <div class="qa-entry-icon"><i data-lucide="pencil" style="width:22px;height:22px"></i></div>
+                <span class="qa-entry-name">文字</span>
+                <small class="qa-entry-desc">粘贴题目</small>
+            </div>
+        </div>
+
+        <div id="qa-text-area">
+            <label class="input-label" for="qa-content-input">题目内容</label>
+            <textarea id="qa-content-input" class="input textarea qa-content-input" placeholder="粘贴日语题目。例如：&#10;次の言葉を使って、正しい文を作りなさい。&#10;毎日＿＿＿散歩します。（てから / ながら）"></textarea>
+            <p class="input-hint" id="qa-char-count">0 字</p>
+        </div>
+
+        <div id="qa-file-upload" style="display:none;">
+            <label class="input-label" id="qa-file-label">上传文件</label>
+            <div class="qa-drop-zone" id="qa-drop-zone">
+                <i data-lucide="upload" style="width:28px;height:28px"></i>
+                <p id="qa-drop-text">拖拽文件到这里，或点击选择</p>
+                <span class="qa-drop-hint" id="qa-drop-hint">支持 PDF / PNG / JPG / WebP，最大 10 MB</span>
+                <input type="file" id="qa-file-input" accept=".pdf,image/png,image/jpg,image/jpeg,image/webp" hidden>
+            </div>
+            <p class="input-hint" id="qa-file-status"></p>
+        </div>
+
+        <div class="qa-optional-grid">
+            <div class="qa-optional-field">
+                <label class="input-label" for="qa-answer-key">标准答案 <span class="qa-optional-tag">可选</span></label>
+                <input type="text" id="qa-answer-key" class="input" placeholder="题目自带答案？填这里可自动判分" autocomplete="off">
+            </div>
+            <div class="qa-optional-field">
+                <label class="input-label" for="qa-user-answer">我的答案 <span class="qa-optional-tag">可选</span></label>
+                <input type="text" id="qa-user-answer" class="input" placeholder="你写的答案？AI 评判对错" autocomplete="off">
+            </div>
+        </div>
+
+        <p class="input-hint" id="qa-mode-hint"></p>
+
+        <div class="qa-actions">
+            <button class="btn btn-primary btn-full" id="btn-qa-parse"><i data-lucide="sparkles" style="width:16px;height:16px"></i> 开始解析</button>
+        </div>
+        <p id="qa-error" class="error-text" style="display:none;"></p>
+
+        <div id="qa-result" class="qa-result" style="display:none;"></div>
+    `;
+    refreshIcons();
+
+    // 恢复状态（DOM 刚重建，重置文件绑定标记让 PDF 入口重新挂事件）
+    resetQaFileBind();
+    qaSetEntry(QaState.entry);
+    $("#qa-content-input").value = QaState.content;
+    $("#qa-answer-key").value = QaState.answerKey;
+    $("#qa-user-answer").value = QaState.userAnswer;
+    updateQaCharCount();
+    updateQaModeHint();
+
+    // 三入口互斥（QA-1：选一个，其余置灰）
+    $$("#qa-entry-grid .qa-entry-card").forEach(el => {
+        el.onclick = () => qaSetEntry(el.dataset.entry);
+    });
+
+    // 输入事件
+    $("#qa-content-input").oninput = () => {
+        QaState.content = $("#qa-content-input").value;
+        updateQaCharCount();
+    };
+    $("#qa-answer-key").oninput = () => { QaState.answerKey = $("#qa-answer-key").value; updateQaModeHint(); };
+    $("#qa-user-answer").oninput = () => { QaState.userAnswer = $("#qa-user-answer").value; updateQaModeHint(); };
+
+    $("#btn-qa-parse").onclick = () => submitQaParse(false);
+
+    // 返回按钮
+    const backBtn = $("#btn-qa-back");
+    if (backBtn) { backBtn.style.display = ""; backBtn.onclick = showMainScreen; }
+
+    // 若已有结果，重新渲染
+    if (QaState.result) renderQaResult(QaState.result);
+}
+
+function qaSetEntry(type) {
+    QaState.entry = type;
+    $$("#qa-entry-grid .qa-entry-card").forEach(el => {
+        el.classList.toggle("active", el.dataset.entry === type);
+    });
+    const textArea = $("#qa-text-area");
+    const fileUpload = $("#qa-file-upload");
+    const parseBtn = $("#btn-qa-parse");
+
+    if (type === "text") {
+        // 文字入口：显示 textarea，隐藏文件上传
+        if (textArea) textArea.style.display = "";
+        if (fileUpload) fileUpload.style.display = "none";
+        if (parseBtn) parseBtn.disabled = false;
+    } else {
+        // 图片 / PDF 入口：显示文件上传区，隐藏 textarea（提取后在 textarea 回显）
+        if (textArea) textArea.style.display = "none";
+        if (fileUpload) fileUpload.style.display = "";
+        if (parseBtn) parseBtn.disabled = !(QaState.content && QaState.content.trim());
+        // 按入口类型更新拖拽区文案，并绑定文件选择事件
+        updateQaDropHint(type);
+        bindQaFileUpload();
+    }
+}
+
+function updateQaDropHint(type) {
+    const label = $("#qa-file-label");
+    const dropText = $("#qa-drop-text");
+    const hint = $("#qa-drop-hint");
+    if (type === "pdf") {
+        if (label) label.textContent = "上传 PDF";
+        if (dropText) dropText.textContent = "拖拽 PDF 文件到这里，或点击选择";
+        if (hint) hint.textContent = "支持 .pdf，最大 10 MB，最多 50 页";
+    } else {
+        if (label) label.textContent = "上传图片";
+        if (dropText) dropText.textContent = "拖拽截图 / 照片到这里，或点击选择";
+        if (hint) hint.textContent = "支持 PNG / JPG / WebP，最大 10 MB";
+    }
+}
+
+let _qaFileBound = false;
+function bindQaFileUpload() {
+    if (_qaFileBound) return;
+    _qaFileBound = true;
+
+    const dropZone = $("#qa-drop-zone");
+    const fileInput = $("#qa-file-input");
+    const statusEl = $("#qa-file-status");
+
+    if (!dropZone || !fileInput) { _qaFileBound = false; return; }
+
+    // 点击打开文件选择器
+    dropZone.onclick = () => fileInput.click();
+
+    // 拖拽事件
+    ["dragenter", "dragover"].forEach(ev => {
+        dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.add("qa-drop-active"); });
+    });
+    ["dragleave", "drop"].forEach(ev => {
+        dropZone.addEventListener(ev, e => { e.preventDefault(); dropZone.classList.remove("qa-drop-active"); });
+    });
+    dropZone.addEventListener("drop", e => {
+        const files = e.dataTransfer.files;
+        if (files.length) handleQaFile(files[0], statusEl);
+    });
+
+    fileInput.onchange = () => {
+        if (fileInput.files.length) handleQaFile(fileInput.files[0], statusEl);
+    };
+}
+
+function resetQaFileBind() { _qaFileBound = false; }
+
+function qaFileKind(file) {
+    const n = (file && file.name || "").toLowerCase();
+    if (/\.pdf$/.test(n)) return "pdf";
+    if (/\.(png|jpe?g|webp)$/.test(n)) return "image";
+    return "";
+}
+
+async function handleQaFile(file, statusEl) {
+    const kind = qaFileKind(file);
+    if (!kind) {
+        if (statusEl) statusEl.textContent = "请选择 PDF 或图片（PNG / JPG / WebP）";
+        return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+        if (statusEl) statusEl.textContent = "文件过大（最大 10 MB）";
+        return;
+    }
+
+    const action = kind === "pdf" ? "提取 PDF 文字" : "识别图片文字";
+    if (statusEl) statusEl.textContent = `正在${action}（${(file.size / 1024 / 1024).toFixed(1)} MB）…`;
+
+    const form = new FormData();
+    form.append("file", file);
+
+    try {
+        const resp = await fetch("/api/qa/upload", { method: "POST", body: form });
+        const data = await resp.json();
+
+        if (!data.success) {
+            if (statusEl) statusEl.textContent = data.warning || data.error || "提取失败";
+            return;
+        }
+
+        if (statusEl) statusEl.textContent = kind === "pdf"
+            ? `✅ 已提取 ${data.pages} 页，${data.text.length} 字`
+            : `✅ 已识别图片文字（${data.text.length} 字）`;
+        QaState.content = data.text;
+
+        // 回填 textarea，切换到文字入口让用户编辑
+        const textArea = $("#qa-content-input");
+        if (textArea) textArea.value = data.text;
+        updateQaCharCount();
+
+        // 显示 textarea，隐藏文件上传区
+        const ta = $("#qa-text-area");
+        const fu = $("#qa-file-upload");
+        if (ta) ta.style.display = "";
+        if (fu) fu.style.display = "none";
+
+        const parseBtn = $("#btn-qa-parse");
+        if (parseBtn) parseBtn.disabled = false;
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `上传失败：${err.message}`;
+    }
+}
+
+function updateQaCharCount() {
+    const el = $("#qa-char-count");
+    if (el) el.textContent = `${($("#qa-content-input").value || "").length} 字`;
+}
+
+function updateQaModeHint() {
+    const hint = $("#qa-mode-hint");
+    if (!hint) return;
+    const mode = qaDetectMode(QaState.answerKey, QaState.userAnswer);
+    hint.textContent = QA_MODE_HINTS[mode];
+}
+
+async function submitQaParse(detail) {
+    const content = ($("#qa-content-input").value || "").trim();
+    const gate = qaValidate(content);
+    if (!gate.ok) {
+        showError("qa-error", gate.msg);
+        return;
+    }
+    hide($("#qa-error"));
+
+    const answerKey = ($("#qa-answer-key").value || "").trim();
+    const userAnswer = ($("#qa-user-answer").value || "").trim();
+    QaState.content = content;
+    QaState.answerKey = answerKey;
+    QaState.userAnswer = userAnswer;
+
+    showLoading(detail ? "正在生成详细讲解..." : "正在解析题目...");
+    try {
+        const result = await api("/api/qa/parse", {
+            method: "POST",
+            body: JSON.stringify({
+                content,
+                answer_key: answerKey,
+                user_answer: userAnswer,
+                level: AppState.config.level || "N4",
+                detail: !!detail,
+            }),
+        });
+        hideLoading();
+        QaState.result = result;
+        QaState.detailShown = !!detail;
+        renderQaResult(result);
+    } catch (err) {
+        hideLoading();
+        showError("qa-error", err.message);
+    }
+}
+
+function qaFocusTagsOf(result) {
+    return [...new Set((result.knowledge_tags || [])
+        .filter(t => t.type === "grammar" || t.type === "vocab_pair")
+        .map(t => (t.tag || "").trim())
+        .filter(Boolean))];
+}
+
+function renderQaResult(result) {
+    const wrap = $("#qa-result");
+    if (!wrap) return;
+    wrap.style.display = "";
+
+    const mode = result.mode || "C";
+    const qtype = result.question_type || "";
+    const struct = result.structure || {};
+    const ans = result.answer || {};
+
+    const modeBadge = {
+        A: { cls: "qa-mode-a", text: "模式 A · 确定性判分" },
+        B: { cls: "qa-mode-b", text: "模式 B · AI 评判" },
+        C: { cls: "qa-mode-c", text: "模式 C · AI 解题 🤖" },
+    }[mode] || { cls: "qa-mode-c", text: "模式 " + mode };
+
+    // 题目结构
+    let structHtml = "";
+    if (struct.stem) structHtml += `<div class="qa-stem">${escapeHtml(struct.stem)}</div>`;
+    if (struct.options && struct.options.length) {
+        structHtml += `<div class="qa-options">${struct.options.map((o, i) =>
+            `<div class="qa-option"><span class="qa-option-letter">${String.fromCharCode(65 + i)}</span>${escapeHtml(o)}</div>`
+        ).join("")}</div>`;
+    }
+    if (struct.passage) {
+        structHtml += `<details class="qa-passage"><summary>阅读全文（${struct.passage.length} 字）</summary><p class="qa-passage-body">${escapeHtml(struct.passage)}</p></details>`;
+    }
+    if (struct.sub_questions && struct.sub_questions.length) {
+        structHtml += `<div class="qa-sub-questions">${struct.sub_questions.map(sq => {
+            const opts = (sq.options && sq.options.length)
+                ? `<div class="qa-options">${sq.options.map((o, i) => `<div class="qa-option"><span class="qa-option-letter">${String.fromCharCode(65 + i)}</span>${escapeHtml(o)}</div>`).join("")}</div>` : "";
+            const a = sq.answer ? `<div class="qa-sub-answer">答案：${escapeHtml(sq.answer)}</div>` : "";
+            return `<div class="qa-sub-question"><span class="qa-sub-num">${sq.id || ""}</span><div class="qa-sub-body">${escapeHtml(sq.stem)}${opts}${a}</div></div>`;
+        }).join("")}</div>`;
+    }
+
+    // 答案块
+    let ansHtml = "";
+    if (mode === "A") {
+        let verdictHtml = "";
+        if (ans.is_correct === true) verdictHtml = `<div class="qa-verdict qa-verdict-correct">✓ 回答正确</div>`;
+        else if (ans.is_correct === false) verdictHtml = `<div class="qa-verdict qa-verdict-wrong">✗ 回答错误</div>`;
+        else verdictHtml = `<div class="qa-verdict qa-verdict-neutral">未填「我的答案」，未判分</div>`;
+        ansHtml = `
+            <div class="qa-answer-block">
+                ${verdictHtml}
+                <div class="qa-compare-row">
+                    <div><small>标准答案</small><p>${escapeHtml(ans.answer_key || "—")}</p></div>
+                    <div><small>你的答案</small><p>${escapeHtml(ans.user_answer || "—")}</p></div>
+                </div>
+            </div>`;
+    } else if (mode === "B") {
+        ansHtml = `
+            <div class="qa-answer-block">
+                <div class="qa-compare-row">
+                    <div><small>你的答案</small><p>${escapeHtml(ans.user_answer || "—")}</p></div>
+                    <div><small>参考解析</small><p>${escapeHtml(ans.correct_answer || "—")}</p></div>
+                </div>
+                <div class="qa-judgment"><strong>AI 评判：</strong><span>${escapeHtml(ans.judgment || "—")}</span></div>
+            </div>`;
+    } else {
+        const conf = typeof ans.ai_confidence === "number" ? Math.round(ans.ai_confidence * 100) : null;
+        ansHtml = `
+            <div class="qa-answer-block qa-ai-block">
+                <div class="qa-ai-tag">🤖 AI 解答</div>
+                <div class="qa-ai-answer">${escapeHtml(ans.correct_answer || "—")}</div>
+                ${conf !== null ? `<div class="qa-ai-confidence">置信度 ${conf}%</div>` : ""}
+            </div>`;
+    }
+
+    // 讲解（QP-7：默认精简，展开调详细版）
+    const detailBtnHtml = QaState.detailShown
+        ? ""
+        : `<button class="btn btn-secondary btn-sm qa-detail-toggle" id="btn-qa-detail"><i data-lucide="chevron-down" style="width:14px;height:14px"></i> 展开详细讲解</button>`;
+
+    // 知识点标签
+    const tags = result.knowledge_tags || [];
+    const tagsHtml = tags.length ? `<div class="qa-tags">${tags.map(t => {
+        const type = (t.type && QA_TAG_TYPE_LABELS[t.type]) ? t.type : "comprehension";
+        const inferred = t.ai_inferred ? " 🤖" : "";
+        return `<span class="qa-tag-chip qa-tag-${type}">${escapeHtml(QA_TAG_TYPE_LABELS[type])} · ${escapeHtml(t.tag)}${inferred}</span>`;
+    }).join("")}</div>` : "";
+
+    // 去练习（QG-1：提取 grammar + vocab_pair）
+    const focusTags = qaFocusTagsOf(result);
+    const practiceDisabled = focusTags.length === 0;
+
+    // M3：模式 C 且有知识点 → 已入待确认池，提供查看入口
+    let pendingNoteHtml = "";
+    if (mode === "C" && (result.knowledge_tags || []).length) {
+        pendingNoteHtml = `
+            <div class="qa-pending-note">
+                <i data-lucide="inbox" style="width:14px;height:14px"></i>
+                <span>AI 推断知识点已加入「待确认池」</span>
+                <button class="btn btn-secondary btn-sm" id="btn-qa-pending-open">查看待确认</button>
+            </div>`;
+    }
+
+    wrap.innerHTML = `
+        <div class="qa-result-divider"></div>
+        <div class="qa-result-header">
+            <span class="qa-mode-badge ${modeBadge.cls}">${modeBadge.text}</span>
+            <span class="qa-type-badge">${escapeHtml(QA_TYPE_LABELS[qtype] || qtype)}</span>
+            ${result.cached ? `<span class="qa-cached-badge"><i data-lucide="zap" style="width:12px;height:12px"></i> 缓存</span>` : ""}
+        </div>
+
+        <div class="qa-question-block">
+            <div class="qa-section-title">📝 题目</div>
+            ${structHtml || `<p class="qa-empty">（未提取到题目结构）</p>`}
+        </div>
+
+        ${ansHtml}
+
+        <div class="qa-explanation">
+            <div class="qa-section-title">💡 讲解</div>
+            <div class="qa-explanation-body">${renderMarkdown(result.explanation)}</div>
+            ${result.explanation_detail ? `<div class="qa-explanation-detail">${renderMarkdown(result.explanation_detail)}</div>` : ""}
+            ${detailBtnHtml}
+        </div>
+
+        ${tagsHtml}
+
+        ${pendingNoteHtml}
+
+        <div class="qa-action-row">
+            <button class="btn btn-secondary" id="btn-qa-again"><i data-lucide="rotate-ccw" style="width:16px;height:16px"></i> 再解析一道</button>
+            <button class="btn btn-primary" id="btn-qa-practice" ${practiceDisabled ? "disabled" : ""}><i data-lucide="arrow-right" style="width:16px;height:16px"></i> 去练习</button>
+        </div>
+        ${practiceDisabled ? `<p class="input-hint">该题暂无语法 / 易混词知识点，暂不能联动练习</p>` : ""}
+    `;
+    refreshIcons();
+
+    const detailBtn = $("#btn-qa-detail");
+    if (detailBtn) detailBtn.onclick = () => submitQaParse(true);
+
+    const againBtn = $("#btn-qa-again");
+    if (againBtn) againBtn.onclick = resetQaForm;
+
+    const practiceBtn = $("#btn-qa-practice");
+    if (practiceBtn) practiceBtn.onclick = () => startQaPractice(focusTags);
+
+    const pendingOpenBtn = $("#btn-qa-pending-open");
+    if (pendingOpenBtn) pendingOpenBtn.onclick = toggleQaPendingPanel;
+
+    wrap.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function resetQaForm() {
+    QaState.content = "";
+    QaState.answerKey = "";
+    QaState.userAnswer = "";
+    QaState.result = null;
+    QaState.detailShown = false;
+    const contentInput = $("#qa-content-input");
+    if (contentInput) contentInput.value = "";
+    const ak = $("#qa-answer-key"); if (ak) ak.value = "";
+    const ua = $("#qa-user-answer"); if (ua) ua.value = "";
+    updateQaCharCount();
+    updateQaModeHint();
+    const err = $("#qa-error"); if (err) hide(err);
+    const res = $("#qa-result"); if (res) { res.style.display = "none"; res.innerHTML = ""; }
+    if (contentInput) contentInput.focus();
+}
+
+async function startQaPractice(focusTags) {
+    const tags = focusTags || qaFocusTagsOf(QaState.result);
+    if (!tags.length) return;
+
+    const stem = (QaState.result && QaState.result.structure && QaState.result.structure.stem) || "";
+    const notes = "专注练习以下知识点：" + tags.join("、") + (stem ? "\n（原题：" + stem + "）" : "");
+
+    showLoading("正在按知识点生成练习题...");
+    try {
+        const result = await api("/api/generate_questions", {
+            method: "POST",
+            body: JSON.stringify({
+                notes,
+                level: AppState.config.level,
+                vocabulary: "",
+                textbook_vocab: currentBookVocab || [],
+                focus_tags: tags,   // M4 起由出题 API 正式消费
+            }),
+        });
+        if (!result.success || !result.data) throw new Error("出题失败，请重试");
+        const questions = result.data.questions || [];
+        if (!questions.length) throw new Error("未能生成题目，请重试");
+
+        AppState.notes = notes;
+        AppState.vocabulary = "";
+        AppState.questions = questions;
+        AppState.vocabUsed = result.data.vocab_used || [];
+        AppState.currentIndex = 0;
+        AppState.records = [];
+        AppState.totalAnswered = 0;
+        AppState.baseTotal = questions.length;
+
+        await saveProgress();
+        hideLoading();
+        initQuizScreen();
+    } catch (err) {
+        hideLoading();
+        alert(`去练习失败：${err.message}`);
+    }
+}
+
+// ============================================================
+// 答疑（QA）M3 — 待确认池（KB-3/KB-4）
+// ============================================================
+async function toggleQaPendingPanel() {
+    const panel = $("#qa-pending-panel");
+    if (!panel) return;
+    QaState.pendingVisible = !QaState.pendingVisible;
+    panel.style.display = QaState.pendingVisible ? "" : "none";
+    if (QaState.pendingVisible) {
+        await renderQaPendingList();
+        if (panel.scrollIntoView) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+}
+
+function qaPendingStatus(msg, isError) {
+    const el = $("#qa-pending-status");
+    if (!el) return;
+    el.textContent = msg;
+    el.className = "qa-pending-status" + (isError ? " error-text" : "");
+    show(el);
+}
+
+async function renderQaPendingList() {
+    const panel = $("#qa-pending-panel");
+    if (!panel) return;
+    panel.innerHTML = `
+        <div class="qa-pending-header">
+            <h3><i data-lucide="inbox" style="width:18px;height:18px"></i> 待确认池</h3>
+            <button class="btn btn-text btn-sm" id="btn-qa-pending-close">收起</button>
+        </div>
+        <p class="input-hint">模式 C（纯题目）解析出的 AI 推断知识点在此待确认，确认后才进入 SM-2 复习。</p>
+        <div id="qa-pending-body"><p class="input-hint">加载中...</p></div>
+        <p class="qa-pending-status" id="qa-pending-status" style="display:none;"></p>
+    `;
+    refreshIcons();
+    $("#btn-qa-pending-close").onclick = () => {
+        QaState.pendingVisible = false;
+        panel.style.display = "none";
+    };
+    try {
+        const res = await api("/api/qa/pending");
+        renderQaPendingBody(res.items || []);
+    } catch (err) {
+        qaPendingStatus(err.message, true);
+    }
+}
+
+function renderQaPendingBody(items) {
+    const body = $("#qa-pending-body");
+    if (!body) return;
+    if (!items.length) {
+        body.innerHTML = `<p class="input-hint">待确认池是空的。</p>`;
+        return;
+    }
+    body.innerHTML = items.map(item => {
+        const tags = (item.knowledge_tags || []).map(t =>
+            `<span class="qa-tag-chip qa-tag-${t.type || "comprehension"}">${escapeHtml(t.tag)}</span>`
+        ).join(" ");
+        const conf = typeof item.ai_confidence === "number"
+            ? ` · 置信度 ${Math.round(item.ai_confidence * 100)}%` : "";
+        return `
+            <div class="qa-pending-item" data-id="${escapeHtml(item.id)}">
+                <div class="qa-pending-item-head">
+                    <span class="qa-pending-item-time">${escapeHtml((item.parsed_at || "").slice(0, 16))}</span>
+                    <span class="qa-pending-item-mode">AI 推断${conf}</span>
+                </div>
+                <p class="qa-pending-item-preview">${escapeHtml(item.content_preview || "")}</p>
+                <div class="qa-pending-item-tags">${tags}</div>
+                ${item.ai_answer ? `<p class="qa-pending-item-answer">🤖 ${escapeHtml(item.ai_answer)}</p>` : ""}
+                <div class="qa-pending-item-actions">
+                    <button class="btn btn-primary btn-sm qa-pending-confirm">确认入库</button>
+                    <button class="btn btn-secondary btn-sm qa-pending-reparse">补答案键重解析</button>
+                    <button class="btn btn-text btn-sm qa-pending-discard">丢弃</button>
+                </div>
+                <div class="qa-reparse-box" style="display:none;">
+                    <input type="text" class="input" placeholder="粘贴这道题的标准答案，重新解析后覆盖 AI 推断" autocomplete="off">
+                    <button class="btn btn-primary btn-sm qa-reparse-submit">重新解析</button>
+                </div>
+            </div>`;
+    }).join("");
+    refreshIcons();
+
+    body.querySelectorAll(".qa-pending-confirm").forEach(btn => {
+        btn.onclick = () => confirmQaPending(btn.closest(".qa-pending-item").dataset.id);
+    });
+    body.querySelectorAll(".qa-pending-discard").forEach(btn => {
+        btn.onclick = () => discardQaPending(btn.closest(".qa-pending-item").dataset.id);
+    });
+    body.querySelectorAll(".qa-pending-reparse").forEach(btn => {
+        btn.onclick = () => {
+            const box = btn.closest(".qa-pending-item").querySelector(".qa-reparse-box");
+            box.style.display = box.style.display === "none" ? "" : "none";
+        };
+    });
+    body.querySelectorAll(".qa-reparse-submit").forEach(btn => {
+        btn.onclick = async () => {
+            const item = btn.closest(".qa-pending-item");
+            const answerKey = item.querySelector(".qa-reparse-box input").value.trim();
+            await reparseQaPending(item.dataset.id, answerKey);
+        };
+    });
+}
+
+async function confirmQaPending(id) {
+    showLoading("正在确认入库...");
+    try {
+        const res = await api("/api/qa/pending/confirm", {
+            method: "POST",
+            body: JSON.stringify({ ids: [id] }),
+        });
+        hideLoading();
+        let msg = `已确认 ${res.confirmed} 条知识点入库`;
+        if (res.fuzzy && res.fuzzy.length) {
+            msg += `；${res.fuzzy.length} 条存在相近知识点，需进一步核对`;
+        }
+        qaPendingStatus(msg);
+        renderQaPendingList();
+    } catch (err) {
+        hideLoading();
+        qaPendingStatus(err.message, true);
+    }
+}
+
+async function discardQaPending(id) {
+    showLoading("正在丢弃...");
+    try {
+        const res = await api("/api/qa/pending/discard", {
+            method: "POST",
+            body: JSON.stringify({ ids: [id] }),
+        });
+        hideLoading();
+        qaPendingStatus(`已丢弃 ${res.discarded} 条`);
+        renderQaPendingList();
+    } catch (err) {
+        hideLoading();
+        qaPendingStatus(err.message, true);
+    }
+}
+
+async function reparseQaPending(id, answerKey) {
+    if (!answerKey) { qaPendingStatus("请先填写这道题的标准答案", true); return; }
+    showLoading("正在重新解析...");
+    try {
+        const res = await api("/api/qa/pending/reparse", {
+            method: "POST",
+            body: JSON.stringify({ id, answer_key: answerKey, level: AppState.config.level || "N4" }),
+        });
+        hideLoading();
+        QaState.result = res.result;
+        QaState.detailShown = false;
+        qaPendingStatus("已按标准答案重新解析，请再次「确认入库」");
+        renderQaPendingList();
+        if (QaState.result) renderQaResult(QaState.result);
+    } catch (err) {
+        hideLoading();
+        qaPendingStatus(err.message, true);
+    }
 }
 
 // ============================================================

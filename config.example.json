@@ -1,5 +1,6 @@
 {
   "api_key": "",
   "level": "N4",
-  "model": "deepseek-chat"
+  "model": "deepseek-chat",
+  "learning_goal": ""
 }

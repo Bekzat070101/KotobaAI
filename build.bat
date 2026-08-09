@@ -15,10 +15,14 @@ pyinstaller --noconsole --onefile --name "KOTOBA-AI" ^
     --icon "logo.ico" ^
     --add-data "static;static" ^
     --add-data "knowledge_base;knowledge_base" ^
+    --add-data "ocr_models;ocr_models" ^
     --hidden-import "prompts" ^
     --hidden-import "prompts.generate_questions" ^
     --hidden-import "prompts.grade_answer" ^
     --hidden-import "prompts.generate_summary" ^
+    --collect-all rapidocr_onnxruntime ^
+    --collect-all onnxruntime ^
+    --collect-all cv2 ^
     app.py
 
 if %errorlevel% neq 0 (

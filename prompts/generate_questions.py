@@ -3,11 +3,13 @@
 
 出题格式：场景描述 + 要表达的句子（而非逐字翻译）。
 难度递进：初级复句 → 中级多从句 → 高级综合叙事，均在日常生活语言范畴内。
+
+M4 新增：question_type 参数（translation / fill_blank / mixed）+ focus_tags 参数。
 """
 
 
-def build_generate_questions_prompt(notes: str, level: str, learned_content: list = None, vocab_text: str = "", vocab_bank: list = None, textbook_vocab: list = None) -> str:
-    """构建出题 prompt — 场景化表达，渐进式难度。"""
+def build_generate_questions_prompt(notes: str, level: str, learned_content: list = None, vocab_text: str = "", vocab_bank: list = None, textbook_vocab: list = None, question_type: str = "translation", focus_tags: list = None) -> str:
+    """构建出题 prompt — 场景化表达，渐进式难度。支持翻译/填空/混合三种题型。"""
 
     # JLPT 级别范围说明
     level_scope = {
@@ -103,23 +105,55 @@ def build_generate_questions_prompt(notes: str, level: str, learned_content: lis
 {chr(10).join(words_desc)}
 """
 
-    prompt = f"""你是一位精通日语教学的私人教练。你的学生是{level}级别的日语学习者。
+    # 答疑联动 —— 专注知识点（M4 新增）
+    focus_section = ""
+    if focus_tags and len(focus_tags) > 0:
+        tag_list = "\n".join([f"  - {t}" for t in focus_tags])
+        focus_section = f"""
+## 🎯 本次练习专注知识点（从答疑联动而来）
 
-## 学生级别
-{scope}
+以下知识点是用户刚在答疑中遇到的薄弱项，请**优先围绕这些知识点出题**：
+{tag_list}
 
-## 学生今日语法笔记
-```
-{notes}
-```
-{learned_section}
-{textbook_section}
-{vocab_section}
-{vocab_bank_section}
+所有题目必须紧扣上述知识点，这是本次练习的核心目标。笔记中其他语法点可作为辅助。
+"""
 
----
+    # 题型分叉 —— 格式说明（M4 新增）
+    if question_type == "fill_blank":
+        format_section = """## 🔤 题型：挖空选择题
 
-## 🎯 出题格式（非常重要！）
+每道题是四选一的选择题格式，由以下字段组成：
+
+### 字段说明
+- **scene**：场景描述（同翻译题型，生动具体的生活场景）
+- **stem**：包含空白的日语句子，空白处用 ＿＿＿＿ 表示（4 个全角下划线）
+- **options**：4 个日语选项（**必须是完整、自然的日语表达**，不是单词拼接），只有 1 个是正确答案
+- **correct_option**：正确答案在 options 中的索引（0-based，即 0/1/2/3）
+- **blank_position**：中文描述空白的位置（如"在助词を之后"），帮助学生定位
+- **explanation**：一句话解释为什么正确答案是对的（中文）
+- **grammar_point**：考察的语法点
+- **hints**：词汇提示（规则与翻译题型相同）
+- **difficulty**：1=基础，2=进阶，3=挑战
+- **is_extra / extra_level**：超纲标记
+
+### 干扰项要求
+- 所有 4 个选项都必须是**正确、自然的日语**（都读得通），差异在于**语法是否符合语境**
+- 干扰项应为常见学习者错误（助词混用、时态错、形变错等），不要编造不存在的日语
+- 避免长度差异过大的选项泄题"""
+    elif question_type == "mixed":
+        format_section = """## 🎲 题型：混合模式
+
+每道题**各自标注 question_type**，约一半为 "translation"（情景翻译），一半为 "fill_blank"（挖空选择）。两种题型交错排列。
+
+### 翻译题格式（question_type: "translation"）
+包含 scene / chinese / hints / reference_answer，与标准翻译题型一致。
+
+### 选择题格式（question_type: "fill_blank"）
+包含 scene / stem / options[4] / correct_option / blank_position / explanation，与标准选择题型一致。
+
+选择题的 options 必须全部是正确自然的日语，干扰项基于常见学习者错误设计。"""
+    else:
+        format_section = """## 📝 题型：情景翻译
 
 每道题由两部分组成：
 
@@ -134,7 +168,21 @@ def build_generate_questions_prompt(notes: str, level: str, learned_content: lis
 **示例：**
 > 场景：你是一位日本公司的前辈，正在指导一位刚入职的后辈使用公司内部的考勤系统。后辈看着电脑屏幕，不知道哪个按钮是「提交申请」。你指着屏幕上的按钮，想告诉他：
 >
-> 要表达的句子：「这个按钮是"提交"的意思，请点击它。」
+> 要表达的句子：「这个按钮是"提交"的意思，请点击它。」"""
+
+    prompt = f"""你是一位精通日语教学的私人教练。你的学生是{level}级别的日语学习者。
+
+## 学生级别
+{scope}
+
+## 学生今日语法笔记
+```
+{notes}
+```
+{focus_section}{learned_section}{textbook_section}{vocab_section}{vocab_bank_section}
+---
+
+{format_section}
 
 ---
 
@@ -195,11 +243,69 @@ def build_generate_questions_prompt(notes: str, level: str, learned_content: lis
 ```json
 {{
   "total": 8,
+  "question_type": "{question_type}",
   "grammar_points_found": ["语法点1", "语法点2", ...],
   "vocab_used": ["用到的今日单词1", ...],
-  "questions": [
+  "questions": ["""
+
+    # 根据题型拼接不同的 question 示例
+    if question_type == "fill_blank":
+        prompt += """
     {{
       "id": 1,
+      "question_type": "fill_blank",
+      "grammar_point": "〜てから",
+      "scene": "教室で友達と会話している",
+      "stem": "朝ごはんを＿＿＿＿、学校に行きます。",
+      "options": ["食べる", "食べてから", "食べた", "食べます"],
+      "correct_option": 1,
+      "blank_position": "在「を」之后、动词的位置",
+      "explanation": "「〜てから」表示做完前项后再做后项",
+      "hints": ["朝ごはん（あさごはん）- 早饭"],
+      "difficulty": 1,
+      "is_extra": false,
+      "extra_level": null
+    }}
+  ]
+}}
+```"""
+    elif question_type == "mixed":
+        prompt += """
+    {{
+      "id": 1,
+      "question_type": "translation",
+      "grammar_point": "〜てから",
+      "scene": "你是公司的新人...",
+      "chinese": "我处理完这封邮件之后去拜访客户。",
+      "hints": ["処理（しょり）- 处理", "取引先（とりひきさき）- 客户"],
+      "reference_answer": "このメールを処理してから取引先を訪ねます。",
+      "difficulty": 1,
+      "is_extra": false,
+      "extra_level": null
+    }},
+    {{
+      "id": 2,
+      "question_type": "fill_blank",
+      "grammar_point": "〜ないで",
+      "scene": "朋友问你为什么没带伞",
+      "stem": "天気予報を見＿＿＿＿、出かけました。",
+      "options": ["ない", "なくて", "ないで", "ません"],
+      "correct_option": 2,
+      "blank_position": "在「見」之后",
+      "explanation": "〜ないで表示不做前项就做后项",
+      "hints": ["天気予報（てんきよほう）- 天气预报"],
+      "difficulty": 1,
+      "is_extra": false,
+      "extra_level": null
+    }}
+  ]
+}}
+```"""
+    else:
+        prompt += """
+    {{
+      "id": 1,
+      "question_type": "translation",
       "grammar_point": "〜てから",
       "scene": "你是公司的新人，刚和同事吃完午饭回到办公室。前辈问你等下有什么安排，你想告诉他你打算处理完邮件后去拜访客户。",
       "chinese": "我处理完这封邮件之后去拜访客户。",
@@ -215,10 +321,13 @@ def build_generate_questions_prompt(notes: str, level: str, learned_content: lis
     }}
   ]
 }}
-```
+```"""
+
+    prompt += """
 
 difficulty 取值：1=基础题（单语法点），2=进阶题（2个语法点组合），3=挑战题（3~4个语法点综合）。
 vocab_used：列出本次出题中用到的今日单词（如果有的话）。
+question_type：顶层为本次练习的题型标识（"{question_type}"），每题内部也标注 question_type。
 """
 
     return prompt

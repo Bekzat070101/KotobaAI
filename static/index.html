@@ -33,13 +33,13 @@
                 <i data-lucide="pen-tool" style="width:20px;height:20px"></i>
                 <span class="dock-tooltip">练习</span>
             </div>
+            <div class="dock-item" data-screen="qa" data-label="答疑">
+                <i data-lucide="messages-square" style="width:20px;height:20px"></i>
+                <span class="dock-tooltip">答疑</span>
+            </div>
             <div class="dock-item" data-screen="settings" data-label="设置">
                 <i data-lucide="settings" style="width:20px;height:20px"></i>
                 <span class="dock-tooltip">设置</span>
-            </div>
-            <div class="dock-item" data-screen="profile" data-label="个人">
-                <i data-lucide="user" style="width:20px;height:20px"></i>
-                <span class="dock-tooltip">个人</span>
             </div>
         </div>
     </div>
@@ -61,7 +61,7 @@
                 <h1 class="guide-hero-title">
                     <img src="logo-word-light.png" alt="KOTOBA·AI" class="logo-word logo-word-light">
                     <img src="logo-word-dark.png" alt="KOTOBA·AI" class="logo-word logo-word-dark">
-                    <span class="beta-badge">Beta 3.0</span>
+                    <span class="beta-badge">Beta 4.0</span>
                 </h1>
                 <p class="guide-hero-sub">你的<span class="text-highlight">专属日语私教</span>，越用越懂你</p>
             </div>
@@ -108,6 +108,16 @@
                     </div>
                     <i data-lucide="external-link" style="width:14px;height:14px;color:var(--text-tertiary)"></i>
                 </a>
+            </div>
+
+            <!-- 公告（点击查看） -->
+            <div class="guide-announce" id="guide-announce" role="button" tabindex="0" title="点击查看公告">
+                <div class="guide-announce-icon"><i data-lucide="megaphone" style="width:22px;height:22px"></i></div>
+                <div class="guide-announce-body">
+                    <strong>版本公告</strong>
+                    <span>Beta v4.0 罗盘更新 · 点击查看更新内容、意见反馈与特别鸣谢</span>
+                </div>
+                <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-tertiary)"></i>
             </div>
 
             <!-- 流程 -->
@@ -157,7 +167,7 @@
                 <h1 class="main-logo">
                     <img src="logo-word-light.png" alt="KOTOBA·AI" class="logo-word logo-word-light">
                     <img src="logo-word-dark.png" alt="KOTOBA·AI" class="logo-word logo-word-dark">
-                    <span class="beta-badge">Beta 3.0</span>
+                    <span class="beta-badge">Beta 4.0</span>
                 </h1>
                 <p class="main-tagline">日语语法闯关练习</p>
             </div>
@@ -206,6 +216,31 @@
                             <button class="level-btn active" data-level="N3">N3<span class="level-desc">中级</span></button>
                             <button class="level-btn" data-level="N2">N2<span class="level-desc">中高级</span></button>
                             <button class="level-btn" data-level="N1">N1<span class="level-desc">高级</span></button>
+                        </div>
+                    </div>
+
+                    <!-- 题型选择（M4） -->
+                    <div class="card config-card" data-glow>
+                        <div class="config-card-header">
+                            <i data-lucide="layout-list" style="width:18px;height:18px"></i>
+                            <span>练习题型</span>
+                        </div>
+                        <div class="qtype-selector" id="qtype-selector">
+                            <button class="qtype-btn active" data-qtype="translation">
+                                <span class="qtype-icon">📝</span>
+                                <span class="qtype-name">翻译练习</span>
+                                <span class="qtype-desc">情景翻译</span>
+                            </button>
+                            <button class="qtype-btn" data-qtype="fill_blank">
+                                <span class="qtype-icon">📋</span>
+                                <span class="qtype-name">选择题</span>
+                                <span class="qtype-desc">语法填空选择</span>
+                            </button>
+                            <button class="qtype-btn" data-qtype="mixed">
+                                <span class="qtype-icon">🎲</span>
+                                <span class="qtype-name">混合模式</span>
+                                <span class="qtype-desc">翻译 + 选择题</span>
+                            </button>
                         </div>
                     </div>
 
@@ -342,6 +377,12 @@
                 <button id="btn-essay-submit" class="btn btn-primary btn-full" style="margin-top: 12px;">提交作文</button>
             </div>
 
+            <!-- 选择题作答区（M4） -->
+            <div class="quiz-answer-bar" id="answer-area-fillblank" style="display: none;">
+                <div class="fillblank-options" id="fillblank-options"></div>
+                <button id="btn-fillblank-submit" class="btn btn-primary btn-full" style="margin-top: 12px;" disabled>请选择答案</button>
+            </div>
+
             <!-- 反馈区域（内联） -->
             <div class="feedback-area" id="feedback-area" style="display: none;">
                 <div class="feedback-card" id="feedback-card"></div>
@@ -445,19 +486,23 @@
         </div>
     </div>
 
-    <!-- ==================== 屏幕 9：个人 ==================== -->
-    <div id="screen-profile" class="screen" style="display: none;">
-        <div class="setup-container profile-container">
+
+    <!-- ==================== 屏幕 10：答疑 ==================== -->
+    <div id="screen-qa" class="screen" style="display: none;">
+        <div class="setup-container qa-container">
             <div class="setup-hero">
-                <div class="setup-icon-wrap"><i data-lucide="user" style="width:40px;height:40px"></i></div>
-                <h1>个人中心</h1>
-                <p class="setup-desc">打卡日历 · 复习计划 · 学习数据</p>
+                <div class="setup-icon-wrap"><i data-lucide="messages-square" style="width:40px;height:40px"></i></div>
+                <h1>答疑</h1>
+                <p class="setup-desc">粘贴日语题目，AI 帮你解析讲解、判分纠错</p>
             </div>
-            <div class="card setup-card" data-glow id="profile-card">
+            <div class="card setup-card" data-glow id="qa-card">
                 <!-- JS 动态填充 -->
             </div>
+            <div class="card setup-card qa-pending-panel" data-glow id="qa-pending-panel" style="display:none;">
+                <!-- 待确认池（M3）由 JS 动态填充 -->
+            </div>
             <div class="setup-footer">
-                <button id="btn-profile-back" class="btn btn-text">← 返回主页</button>
+                <button id="btn-qa-back" class="btn btn-text">← 返回主页</button>
             </div>
         </div>
     </div>
@@ -682,6 +727,20 @@
                         </ul>
                     </div>
                 </div>
+
+                <div class="guide-step">
+                    <div class="guide-step-num">6</div>
+                    <div class="guide-step-content">
+                        <h4>遇到疑问，随时答疑</h4>
+                        <p>练习之外遇到不懂的句子或题目，可以在导航栏进入「答疑」，支持 <strong>文字 / 图片 / PDF</strong> 三种输入方式：</p>
+                        <ul>
+                            <li><strong>📝 文字：</strong>直接粘贴日语句子，选择解析模式即可</li>
+                            <li><strong>🖼️ 图片 / 📄 PDF：</strong>上传题目截图或文档，自动识别日文内容</li>
+                            <li><strong>模式 A/B/C：</strong>带答案判分 / 自己作答请 AI 评判 / 纯题目请 AI 解题</li>
+                            <li>解析出的知识点可<strong>「保存到知识库」</strong>或<strong>「去练习」</strong>生成同类题型巩固</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
 
             <div class="privacy-footer">
@@ -782,6 +841,66 @@
 
             <div class="privacy-footer">
                 <button id="btn-roadmap-close" class="btn btn-primary">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 弹窗：公告 ==================== -->
+    <div id="modal-announce" class="modal-overlay" style="display: none;">
+        <div class="modal-card privacy-modal-card">
+            <div class="privacy-header">
+                <h2 class="modal-title"><i data-lucide="megaphone" style="width:24px;height:24px;color:var(--color-primary)"></i> 公告</h2>
+                <p class="privacy-update">KOTOBA·AI Beta v4.0 · 罗盘更新</p>
+            </div>
+
+            <div class="privacy-body">
+                <div class="guide-step">
+                    <div class="guide-step-content">
+                        <h4>🎉 版本更新</h4>
+                        <ul>
+                            <li><strong>答疑模块全新上线：</strong>支持文字、图片、PDF 三种输入方式，配合「带答案判分 / 自己作答评判 / 纯题解题」三种解析模式，看不懂的句子随时来问</li>
+                            <li><strong>OCR 识别：</strong>拍照或截图上传日文题目，自动识别文字后直接解析</li>
+                            <li><strong>PDF 识别：</strong>上传 PDF 文档，自动提取文本参与解析</li>
+                            <li><strong>知识库重构：</strong>答疑解析出的知识点可一键入库，内置 TF-IDF 检索让答疑更智能，支持待确认池手动确认</li>
+                            <li><strong>设置页重构：</strong>改为「学习数据 / 功能设置」两列布局，打卡日历更紧凑，学习目标、显示模式一目了然</li>
+                            <li><strong>学习数据导入导出：</strong>一键导出知识库、学习记录、打卡、错题本等全部学习数据，更新版本或换电脑时可导入恢复，学习成果不丢失</li>
+                            <li><strong>题型优化：</strong>新增填空、混合题型，填空采用确定性判分，零 AI 成本</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="guide-step">
+                    <div class="guide-step-content">
+                        <h4>💬 用户意见反馈</h4>
+                        <div class="qa-block">
+                            <p class="qa-q">Q1：可以出手机端 App 吗？</p>
+                            <p class="qa-a">目前前端界面尚未适配触控操作，且本人移动端开发经验较少，因此会在正式版发布后考虑移植安卓平台。</p>
+                        </div>
+                        <div class="qa-block">
+                            <p class="qa-q">Q2：软件收费吗？</p>
+                            <p class="qa-a">本人不收取任何软件安装费用，任何以此牟利的行为均为诈骗。但软件运行依赖 DeepSeek API，需要你自行前往 DeepSeek 官网购买 API 使用，单次 API 调用成本不足 ¥0.01。</p>
+                        </div>
+                        <div class="qa-block">
+                            <p class="qa-q">Q3：内置知识库什么时候上线？</p>
+                            <p class="qa-a">预计近期上线，敬请期待。</p>
+                        </div>
+                        <div class="qa-block">
+                            <p class="qa-q">Q4：如何支持开发者？</p>
+                            <p class="qa-a">软件开发纯属本人用爱发电。如果觉得好用，希望能为项目点一颗 GitHub Star，或到 B 站账号充电支持，既能帮我收回一点 token 成本，也能让我更好地持续开发。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="guide-step">
+                    <div class="guide-step-content">
+                        <h4>🙏 特别鸣谢</h4>
+                        <p>感谢 <strong>伊予柑 Iyokann</strong> 的支持与帮助。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="privacy-footer">
+                <button id="btn-announce-close" class="btn btn-primary">知道了</button>
             </div>
         </div>
     </div>

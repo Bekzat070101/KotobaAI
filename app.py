@@ -24,6 +24,22 @@ from prompts.grade_answer import (
     build_essay_grade_prompt,
 )
 from prompts.generate_summary import build_generate_summary_prompt
+from qa_pipeline import (
+    parse_question,
+    classify_content,
+    detect_mode,
+    MAX_QA_LENGTH as MAX_QA_CONTENT_LENGTH,
+)
+from knowledge_mapper import (
+    collect_pending,
+    confirm_pending,
+    discard_pending,
+    list_pending,
+    reparse_pending,
+    rebuild_index,
+    retrieve_top_k,
+    build_qa_knowledge_context,
+)
 # --- 初始化 ---
 import sys
 
@@ -35,16 +51,19 @@ def resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 app = Flask(__name__, static_folder=resource_path("static"), static_url_path="")
-# 限制请求体大小为 1MB（防止 DoS / 巨额 API 费用）
-app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
+# 限制请求体大小 11MB（M5：上传路由允许 10MB 文件 + 余量；文本接口在函数内自行校验长度）
+app.config["MAX_CONTENT_LENGTH"] = 11 * 1024 * 1024
 
 # 全局错误处理：所有异常都返回 JSON，避免前端收到 HTML 报错页
 @app.errorhandler(Exception)
 def handle_all_errors(e):
+    from werkzeug.exceptions import HTTPException
+    # 保留 HTTP 异常状态码（如 413 请求体过大），非 HTTP 异常统一 500
+    status = e.code if isinstance(e, HTTPException) else 500
     if request.path.startswith("/api/"):
-        return jsonify({"error": f"服务器内部错误：{str(e)}"}), 500
+        return jsonify({"error": f"服务器内部错误：{str(e)}"}), status
     # 非 API 路由（如静态文件）使用默认 HTML 处理
-    return str(e), 500
+    return str(e), status
 
 # 启动时自动关闭占用同一端口的旧进程（方便更新版本）
 import subprocess as _sp
@@ -182,6 +201,7 @@ def handle_config():
             "has_api_key": bool(api_key),
             "level": config.get("level", "N4"),
             "model": model,
+            "learning_goal": config.get("learning_goal", ""),
         })
     else:  # POST
         data = request.get_json(silent=True) or {}
@@ -192,6 +212,8 @@ def handle_config():
             config["level"] = data["level"]
         if "model" in data:
             config["model"] = data["model"]
+        if "learning_goal" in data:
+            config["learning_goal"] = data["learning_goal"]
         save_json("config.json", config)
         return jsonify({"success": True})
 
@@ -204,9 +226,16 @@ def generate_questions():
     level = data.get("level", "N4")
     vocab_text = data.get("vocabulary", "").strip()
     textbook_vocab = data.get("textbook_vocab", [])  # 教材单词
+    question_type = data.get("question_type", "translation").strip()  # M4: 题型
+    focus_tags = data.get("focus_tags", [])  # M4: 答疑联动知识点
 
     if not notes:
         return jsonify({"error": "笔记内容不能为空"}), 400
+
+    # 校验题型参数（M4）
+    VALID_QUESTION_TYPES = ("translation", "fill_blank", "mixed")
+    if question_type not in VALID_QUESTION_TYPES:
+        return jsonify({"error": f"题型参数无效，仅支持：{' / '.join(VALID_QUESTION_TYPES)}"}), 400
 
     # 输入长度验证
     err = validate_input(notes, MAX_NOTES_LENGTH, "笔记内容")
@@ -225,6 +254,8 @@ def generate_questions():
     prompt = build_generate_questions_prompt(
         notes, level, learned_items, vocab_text, vocab_words,
         textbook_vocab=textbook_vocab,
+        question_type=question_type,
+        focus_tags=focus_tags,
     )
     response_text = call_deepseek(prompt, require_json=True)
 
@@ -340,7 +371,7 @@ def grade_answer():
         # 读取已学内容，限制新题只能组合已学语法
         learned = load_json("learned_content.json")
         learned_items = learned.get("items", [])
-        prompt = build_regenerate_question_prompt(grammar_point, level, question, learned_items)
+        prompt = build_regenerate_question_prompt(grammar_point, level, question, learned_items, question_type=question.get("question_type", "translation"))
         response_text = call_deepseek(prompt, require_json=True)
         if response_text is None:
             return jsonify({"error": "AI 服务调用失败"}), 500
@@ -362,7 +393,7 @@ def grade_answer():
         # 读取已学内容，限制进阶题只能组合已学语法
         learned = load_json("learned_content.json")
         learned_items = learned.get("items", [])
-        prompt = build_harder_question_prompt(grammar_point, level, question, current_diff, learned_items)
+        prompt = build_harder_question_prompt(grammar_point, level, question, current_diff, learned_items, question_type=question.get("question_type", "translation"))
         response_text = call_deepseek(prompt, require_json=True)
         if response_text is None:
             return jsonify({"error": "AI 服务调用失败"}), 500
@@ -382,6 +413,46 @@ def grade_answer():
         return jsonify({"error": "答案不能为空"}), 400
     err = validate_input(user_answer, MAX_ANSWER_LENGTH, "答案")
     if err: return jsonify({"error": err}), 400
+
+    # --- 选择题（fill_blank）确定性判分：无需 LLM（M4）---
+    if question.get("question_type") == "fill_blank":
+        correct_option = question.get("correct_option", 0)
+        stem = question.get("stem", "")
+        explanation = question.get("explanation", "")
+        options = question.get("options", [])
+        option_labels = ["A", "B", "C", "D"]
+        try:
+            selected = int(user_answer)
+        except (ValueError, TypeError):
+            return jsonify({"error": "选择题答案必须是选项编号（0-3）"}), 400
+        is_correct = (selected == correct_option)
+        correct_text = options[correct_option] if 0 <= correct_option < len(options) else f"选项{correct_option}"
+        selected_text = options[selected] if 0 <= selected < len(options) else f"选项{selected}"
+        selected_label = option_labels[selected] if 0 <= selected < len(option_labels) else str(selected)
+        correct_label = option_labels[correct_option] if 0 <= correct_option < len(option_labels) else str(correct_option)
+        return jsonify({
+            "success": True,
+            "action": "grade",
+            "feedback": {
+                "is_correct": is_correct,
+                "correct_option": correct_option,
+                "selected_option": selected,
+                "score": 10.0 if is_correct else 0.0,
+                "correct_parts": ["✅ 回答正确！"] if is_correct else [],
+                "error_parts": [] if is_correct else [
+                    {
+                        "level": "❌",
+                        "error": f"你选择了 {selected_label}：{selected_text}",
+                        "correction": f"正确答案是 {correct_label}：{correct_text}",
+                        "explanation": explanation or "请查看题目解析",
+                    }
+                ],
+                "suggestions": "",
+                "encouragement": "答对了！继续加油💪" if is_correct else "别灰心，看看解析再试一次！💪",
+                "deterministic": True,
+                "no_llm": True,
+            },
+        })
 
     # 正常批改
     prompt = build_grade_answer_prompt(question, user_answer, level)
@@ -456,6 +527,254 @@ def generate_summary():
         "filename": md_filename,
         "date": today,
     })
+
+
+# --- 答疑（QA）M1：分类路由 + 三模式解析 + 缓存 ---
+@app.route("/api/qa/classify", methods=["POST"])
+def qa_classify():
+    """QP-1：LLM 快速分类输入，返回 question_type 与模式。"""
+    data = request.get_json(silent=True) or {}
+    content = data.get("content", "").strip()
+    if not content:
+        return jsonify({"error": "题目内容不能为空"}), 400
+    err = validate_input(content, MAX_QA_CONTENT_LENGTH, "题目内容")
+    if err: return jsonify({"error": err}), 400
+
+    question_type = classify_content(content, call_deepseek)
+    mode = detect_mode(data.get("answer_key", ""), data.get("user_answer", ""))
+    resp = {"success": True, "question_type": question_type, "mode": mode}
+    if question_type == "not_japanese":
+        resp["warning"] = "未检测到日语内容，请确认上传的是日语题目（示例：次の言葉を使って文を作りなさい。）"
+    return jsonify(resp)
+
+
+@app.route("/api/qa/parse", methods=["POST"])
+def qa_parse():
+    """QP-2/QP-3/QP-6/CC-1：三模式解析，确定性判分，缓存命中零 token。
+    M3：模式 C 知识点进待确认池（KB-3）；TF-IDF 相关知识拼入 prompt（KB-5/CC-2）。"""
+    data = request.get_json(silent=True) or {}
+    content = data.get("content", "")
+    level = data.get("level", "N4")
+    try:
+        # KB-5/CC-2：检索相关已学知识作为参考上下文（辅助信息，不参与缓存键）
+        knowledge_context = build_qa_knowledge_context(content, k=3)
+        result = parse_question(
+            content=content,
+            answer_key=data.get("answer_key", ""),
+            user_answer=data.get("user_answer", ""),
+            level=level,
+            detail=bool(data.get("detail", False)),
+            call_llm=call_deepseek,
+            knowledge_context=knowledge_context,
+        )
+        # KB-3：模式 C 的知识点进待确认池（重复内容自动去重）
+        if result.get("mode") == "C" and not result.get("cached"):
+            collect_pending(content, result, level=level)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- 答疑（QA）M5：文件上传（PDF 文本提取 / 图片 OCR） ---
+import PyPDF2
+import io
+from PIL import Image
+
+ALLOWED_QA_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "webp"}
+MAX_QA_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_QA_IMAGE_DIM = 4096  # 图片最长边上限，超出自动缩放（控制 OCR 耗时）
+OCR_REC_MODEL = os.path.join("ocr_models", "japan_PP-OCRv4_rec_mobile.onnx")
+
+# OCR 引擎单例（首次调用才加载，约 1-2 秒；后续请求复用）
+_ocr_engine = None
+
+
+def _get_ocr_engine():
+    """懒加载 RapidOCR 引擎（日文识别模型）。失败返回 None 并记录。"""
+    global _ocr_engine
+    if _ocr_engine is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _ocr_engine = RapidOCR(rec_model_path=resource_path(OCR_REC_MODEL))
+        except Exception as e:
+            _ocr_engine = False  # 标记失败，避免每次重试
+            print(f"[QA] OCR 引擎加载失败: {e}")
+    return _ocr_engine if _ocr_engine else None
+
+
+def ocr_process(image_bytes: bytes) -> str:
+    """图片字节 → 日文 OCR → 文本（按行拼接）。RapidOCR 日本语识别模型。"""
+    engine = _get_ocr_engine()
+    if engine is None:
+        raise RuntimeError("OCR 引擎不可用，请检查应用完整性")
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        raise ValueError("无法识别该图片格式，请上传 PNG / JPG / WebP 图片")
+    w, h = img.size
+    if max(w, h) > MAX_QA_IMAGE_DIM:  # 超大图等比缩放
+        scale = MAX_QA_IMAGE_DIM / max(w, h)
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    res, _ = engine(buf.getvalue())
+    lines = []
+    for item in res or []:
+        txt = item[1]
+        if txt and str(txt).strip():
+            lines.append(str(txt).strip())
+    return "\n".join(lines)
+
+
+@app.route("/api/qa/upload", methods=["POST"])
+def qa_upload():
+    """接收 PDF / 图片，提取文本返回。PDF 走 PyPDF2 文本提取，图片走日文 OCR。"""
+    if "file" not in request.files:
+        return jsonify({"error": "未选择文件"}), 400
+
+    file = request.files["file"]
+    if not file.filename or file.filename == "":
+        return jsonify({"error": "未选择文件"}), 400
+
+    # 扩展名校验
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ALLOWED_QA_EXTENSIONS:
+        return jsonify({"error": f"暂不支持 .{ext} 格式，请上传 PDF 或图片（PNG/JPG/WebP）"}), 400
+
+    # 大小校验
+    file.seek(0, os.SEEK_END)
+    size = file.tell()
+    file.seek(0)
+    if size > MAX_QA_FILE_SIZE:
+        return jsonify({"error": f"文件过大（最大 10 MB，当前 {size // 1024 // 1024} MB）"}), 400
+    if size == 0:
+        return jsonify({"error": "文件为空，请重新选择"}), 400
+
+    if ext == "pdf":
+        # PDF 文本提取
+        try:
+            pdf_bytes = file.read()
+            reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+        except Exception as e:
+            return jsonify({"error": f"无法读取 PDF 文件：{str(e)}"}), 400
+
+        pages_text = []
+        total_pages = len(reader.pages)
+        if total_pages > 50:
+            return jsonify({"error": f"PDF 页数过多（最大 50 页，当前 {total_pages} 页）"}), 400
+
+        for i, page in enumerate(reader.pages):
+            try:
+                text = page.extract_text()
+                if text and text.strip():
+                    pages_text.append(text.strip())
+            except Exception:
+                pages_text.append(f"[第 {i+1} 页提取失败]")
+
+        extracted = "\n\n".join(pages_text).strip()
+
+        if not extracted or len(extracted) < 10:
+            return jsonify({
+                "success": False,
+                "warning": "未能提取到足够文字。这份 PDF 可能是扫描件（图片型），请使用「图片」入口识别，或「文字」入口手动粘贴。",
+            })
+        pages = total_pages
+    else:
+        # 图片 → OCR
+        image_bytes = file.read()
+        try:
+            extracted = ocr_process(image_bytes)
+        except ValueError as e:
+            return jsonify({"success": False, "warning": str(e)}), 400
+        except RuntimeError as e:
+            return jsonify({"error": str(e)}), 500
+        if not extracted or len(extracted) < 10:
+            return jsonify({
+                "success": False,
+                "warning": "未能识别到足够文字。请确保图片清晰、包含日语文字，或使用「文字」入口手动粘贴。",
+            })
+        pages = 1
+
+    if len(extracted) > MAX_QA_CONTENT_LENGTH:
+        extracted = extracted[:MAX_QA_CONTENT_LENGTH] + "\n\n[内容已截断，超过单次答疑上限]"
+
+    return jsonify({
+        "success": True,
+        "text": extracted,
+        "pages": pages,
+        "ext": ext,
+        "size": size,
+    })
+
+
+
+# --- 答疑（QA）M3：待确认池（KB-3/KB-4） + 知识检索（KB-5） ---
+@app.route("/api/qa/pending", methods=["GET"])
+def qa_pending_list():
+    """KB-3：列出待确认池。"""
+    items = list_pending()
+    return jsonify({"items": items, "count": len(items)})
+
+
+@app.route("/api/qa/pending/confirm", methods=["POST"])
+def qa_pending_confirm():
+    """KB-3：确认知识点 → 映射去重入库 learned_content。"""
+    data = request.get_json(silent=True) or {}
+    try:
+        result = confirm_pending(data.get("ids", []))
+        return jsonify({"success": True, **result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/qa/pending/discard", methods=["POST"])
+def qa_pending_discard():
+    """KB-3：丢弃待确认条目。"""
+    data = request.get_json(silent=True) or {}
+    try:
+        n = discard_pending(data.get("ids", []))
+        return jsonify({"success": True, "discarded": n})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/qa/pending/reparse", methods=["POST"])
+def qa_pending_reparse():
+    """KB-4：补充答案键后整题重新解析，覆盖 AI 推断。"""
+    data = request.get_json(silent=True) or {}
+    try:
+        res = reparse_pending(
+            item_id=data.get("id", ""),
+            answer_key=data.get("answer_key", ""),
+            level=data.get("level", "N4"),
+            call_llm=call_deepseek,
+        )
+        return jsonify({"success": True, "item": res["item"], "result": res["result"]})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/knowledge/retrieve", methods=["GET"])
+def knowledge_retrieve():
+    """KB-5：TF-IDF 检索相关知识 top-k。"""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "检索词不能为空"}), 400
+    k = request.args.get("k", 3, type=int)
+    k = min(max(k, 1), 10)
+    return jsonify({"success": True, "query": q, "results": retrieve_top_k(q, k=k)})
+
+
+@app.route("/api/knowledge/rebuild_index", methods=["POST"])
+def knowledge_rebuild_index():
+    """KB-5：重建 TF-IDF 索引。"""
+    n = rebuild_index()
+    index = load_json("knowledge_index.json")
+    return jsonify({"success": True, "corpus_size": n, "built_at": index.get("built_at", "")})
 
 
 # --- 进度管理 ---
@@ -717,6 +1036,84 @@ def reset_all_data():
     return jsonify({"success": True})
 
 
+# --- 学习数据导出 / 导入（版本更新迁移不丢失数据） ---
+
+def _collect_user_data():
+    """收集除 API Key 外的全部用户学习数据。"""
+    cfg = load_json("config.json", {})
+    return {
+        "app": "KOTOBA-AI",
+        "export_version": 1,
+        "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "config": {k: v for k, v in cfg.items() if k != "api_key"},
+        "progress": load_json("progress.json"),
+        "learned_content": load_json("learned_content.json"),
+        "wrong_book": load_json("wrong_book.json"),
+        "vocabulary": load_json("vocabulary.json"),
+        "pending_knowledge": load_json("pending_knowledge.json"),
+        "qa_cache": load_json("cache/qa_cache.json"),
+        "history": {
+            f[:-5]: load_json(os.path.join("history", f))
+            for f in sorted(os.listdir("history"))
+            if f.endswith(".json")
+        } if os.path.exists("history") else {},
+    }
+
+
+@app.route("/api/data/export", methods=["GET"])
+def export_user_data():
+    """导出用户学习数据为 JSON 文件下载（不含 API Key）。"""
+    payload = _collect_user_data()
+    filename = f"kotoba_learning_data_{datetime.now().strftime('%Y%m%d')}.json"
+    tmp_path = os.path.join("output", filename)
+    save_json(tmp_path, payload)
+    # 用绝对路径：PyInstaller 打包后 app.root_path 指向 _MEIPASS 临时目录，
+    # 相对 "output" 会被解析到 _MEIPASS 下导致 NotFound，绝对路径不受影响。
+    return send_from_directory(
+        os.path.abspath("output"), filename, as_attachment=True, download_name=filename
+    )
+
+
+@app.route("/api/data/import", methods=["POST"])
+def import_user_data():
+    """从导出的 JSON 备份恢复学习数据（合并 config，其余同名覆盖）。"""
+    import re
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get("app") != "KOTOBA-AI":
+        return jsonify({"error": "导入文件格式不正确，请使用 KOTOBA·AI 导出的备份文件"}), 400
+
+    # config：保留现有 api_key，合并其余字段
+    current_cfg = load_json("config.json", {})
+    imported_cfg = data.get("config") or {}
+    for k, v in imported_cfg.items():
+        if k != "api_key":
+            current_cfg[k] = v
+    save_json("config.json", current_cfg)
+
+    # 其余数据文件：同名覆盖
+    file_mapping = [
+        ("progress", "progress.json"),
+        ("learned_content", "learned_content.json"),
+        ("wrong_book", "wrong_book.json"),
+        ("vocabulary", "vocabulary.json"),
+        ("pending_knowledge", "pending_knowledge.json"),
+        ("qa_cache", "cache/qa_cache.json"),
+    ]
+    for key, filepath in file_mapping:
+        val = data.get(key)
+        if isinstance(val, dict):
+            save_json(filepath, val)
+
+    # 历史记录：按日期合并（同名日期覆盖）
+    history = data.get("history") or {}
+    if isinstance(history, dict):
+        for date_str, h in history.items():
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str) and isinstance(h, dict):
+                save_json(os.path.join("history", f"{date_str}.json"), h)
+
+    return jsonify({"success": True, "message": "学习数据导入成功"})
+
+
 @app.route("/api/shutdown", methods=["POST"])
 def shutdown():
     """前端关闭页面时调用，立即退出进程。"""
@@ -776,8 +1173,9 @@ def download_markdown(date):
     if not os.path.exists(md_path):
         return jsonify({"error": "文件不存在"}), 404
 
+    # 用绝对路径：PyInstaller 打包后 app.root_path 指向 _MEIPASS，相对目录会解析到临时目录导致 NotFound
     return send_from_directory(
-        "output",
+        os.path.abspath("output"),
         md_filename,
         as_attachment=True,
         download_name=md_filename,
@@ -829,11 +1227,33 @@ if __name__ == "__main__":
     from threading import Timer
     import webview
 
+    class JsApi:
+        """暴露给前端 window.pywebview.api 的原生方法。"""
+        def export_user_data_native(self):
+            """弹出系统保存对话框，让用户选择导出位置后写入备份文件。"""
+            try:
+                payload = _collect_user_data()
+                default_name = f"kotoba_learning_data_{datetime.now().strftime('%Y%m%d')}.json"
+                result = webview.windows[0].create_file_dialog(
+                    webview.SAVE_DIALOG,
+                    save_filename=default_name,
+                )
+                if not result:
+                    return {"cancelled": True}
+                path = result if isinstance(result, str) else result[0]
+                if not path.lower().endswith(".json"):
+                    path += ".json"
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+                return {"success": True, "path": path}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
     def start_flask():
         app.run(host="127.0.0.1", port=5000, debug=False)
 
     Timer(0.5, start_flask).start()
     webview.create_window("KOTOBA·AI 言葉", "http://127.0.0.1:5000",
                           width=1200, height=800, min_size=(900, 600),
-                          resizable=True)
+                          resizable=True, js_api=JsApi())
     webview.start()

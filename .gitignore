@@ -12,13 +12,17 @@ progress.json
 learned_content.json
 vocabulary.json
 wrong_book.json
+pending_knowledge.json
+knowledge_index.json
 history/
 output/
+cache/
 
 # Internal dev files (kept local, not published)
 devlog/
 docs/
 CLAUDE.md
+.claude/
 static/logo.psd
 
 # Build output

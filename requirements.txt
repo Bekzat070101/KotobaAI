@@ -2,3 +2,5 @@ flask>=3.0.0
 openai>=1.0.0
 cryptography>=42.0.0
 pywebview>=5.0
+PyPDF2>=3.0
+rapidocr-onnxruntime>=1.2.0

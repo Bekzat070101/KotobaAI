@@ -105,8 +105,10 @@ def build_grade_answer_prompt(question: dict, user_answer: str, level: str) -> s
     return prompt
 
 
-def build_regenerate_question_prompt(grammar_point: str, level: str, original_question: dict, learned_items: list = None) -> str:
-    """构建换题 prompt — 同语法点、同难度、完全不同的场景。"""
+def build_regenerate_question_prompt(grammar_point: str, level: str, original_question: dict, learned_items: list = None, question_type: str = "translation") -> str:
+    """构建换题 prompt — 同语法点、同难度、完全不同的场景。M4 新增 question_type 参数。"""
+
+    qt = original_question.get("question_type", question_type)
 
     # 构建可用语法清单（仅限已学内容）
     allowed_grammar = ""
@@ -122,32 +124,35 @@ def build_regenerate_question_prompt(grammar_point: str, level: str, original_qu
 除此之外的语法一律不要出现。如果这些已学语法中只有核心语法点「{grammar_point}」可用，那就只考这一个语法点，搭配最基础的です/ます/て形即可，**不要擅自引入学生没学过的语法**。
 """
     else:
-        allowed_grammar = """
+        allowed_grammar = f"""
 ## ⚠️ 语法范围限制
-学生目前没有已学语法记录。新题**只能考察**「{gp}」这一个语法点，搭配该级别最基础的です/ます/て形即可。
+学生目前没有已学语法记录。新题**只能考察**「{grammar_point}」这一个语法点，搭配该级别最基础的です/ます/て形即可。
 **不要擅自引入任何学生没学过的语法。**
-""".replace("{gp}", grammar_point)
+"""
 
-    prompt = f"""你是日语教师。学生做错了关于「{grammar_point}」的题目，需要换一道**同语法点、同难度**的新题来巩固。
-
-学生级别：{level}
-
-## 原题（不要重复出一样的题）
-- 场景：{original_question.get("scene", "")}
-- 要表达的意思：{original_question.get("chinese", "")}
-- 参考答案：{original_question.get("reference_answer", "")}
-{allowed_grammar}
-
-## 要求
-- 必须考察同一个语法点：{grammar_point}
-- 保持同难度（单语法点 + 基础表达即可，不要拔高）
-- **换一个完全不同的生活场景和要表达的意思**
-- 给出足够全面的词汇提示（动词和有汉字的词都要给读音）
-
-## 输出格式（与正常题目格式一致）
-```json
-{{
+    # 根据题型选择不同的输出格式（M4）
+    if qt == "fill_blank":
+        output_format = f"""{{
   "id": 99,
+  "question_type": "fill_blank",
+  "grammar_point": "{grammar_point}",
+  "scene": "新的生活场景",
+  "stem": "包含＿＿＿＿的日语句子",
+  "options": ["选项A", "选项B", "选项C", "选项D"],
+  "correct_option": 0,
+  "blank_position": "空白的位置描述",
+  "explanation": "为什么正确答案是对的",
+  "hints": ["词汇1（よみ）- 意思"],
+  "difficulty": 1,
+  "is_extra": false,
+  "extra_level": null
+}}"""
+        extra_req = "- 生成 4 个选项（都是正确自然的日语，差异在语法是否正确）\n- 空白处用 ＿＿＿＿ 表示\n- correct_option 为 0-based 索引"
+        original_desc = f"- stem（含空白）：{original_question.get('stem', '')}\n- 正确答案索引：{original_question.get('correct_option', '')}"
+    else:
+        output_format = f"""{{
+  "id": 99,
+  "question_type": "translation",
   "grammar_point": "{grammar_point}",
   "scene": "新的生活场景（详细描述场合、人物关系等）",
   "chinese": "要表达的意思（口语化的中文）",
@@ -156,7 +161,28 @@ def build_regenerate_question_prompt(grammar_point: str, level: str, original_qu
   "difficulty": 1,
   "is_extra": false,
   "extra_level": null
-}}
+}}"""
+        extra_req = ""
+        original_desc = f"- 场景：{original_question.get('scene', '')}\n- 要表达的意思：{original_question.get('chinese', '')}\n- 参考答案：{original_question.get('reference_answer', '')}"
+
+    prompt = f"""你是日语教师。学生做错了关于「{grammar_point}」的题目，需要换一道**同语法点、同难度**的新题来巩固。
+
+学生级别：{level}
+
+## 原题（不要重复出一样的题）
+{original_desc}
+{allowed_grammar}
+
+## 要求
+- 必须考察同一个语法点：{grammar_point}
+- 保持同难度（单语法点 + 基础表达即可，不要拔高）
+- **换一个完全不同的生活场景**
+- 给出足够全面的词汇提示（动词和有汉字的词都要给读音）
+{extra_req}
+
+## 输出格式（与正常题目格式一致）
+```json
+{output_format}
 ```
 
 只返回 JSON。"""
@@ -164,10 +190,11 @@ def build_regenerate_question_prompt(grammar_point: str, level: str, original_qu
     return prompt
 
 
-def build_harder_question_prompt(grammar_point: str, level: str, original_question: dict, current_difficulty: int, learned_items: list = None) -> str:
-    """构建加大难度 prompt — 只能在已学语法范围内组合。"""
+def build_harder_question_prompt(grammar_point: str, level: str, original_question: dict, current_difficulty: int, learned_items: list = None, question_type: str = "translation") -> str:
+    """构建加大难度 prompt — 只能在已学语法范围内组合。M4 新增 question_type 参数。"""
 
     next_diff = min(current_difficulty + 1, 3)
+    qt = original_question.get("question_type", question_type)
 
     # 构建可用语法清单
     allowed_grammar = ""
@@ -213,30 +240,31 @@ def build_harder_question_prompt(grammar_point: str, level: str, original_questi
 
     desc = diff_desc.get(next_diff, diff_desc[2])
 
-    prompt = f"""你是日语教师。学生上一题答得很好，现在要加大难度！
-
-学生级别：{level}
-当前语法点：{grammar_point}
-当前难度：Lv{current_difficulty} → 升级到 Lv{next_diff}
-
-## 原题（参考，不要重复）
-- 场景：{original_question.get("scene", "")}
-- 要表达的意思：{original_question.get("chinese", "")}
-{allowed_grammar}
-
-## 升级要求
-{desc}
-
-- 核心语法点仍然是「{grammar_point}」
-- 场景换一个新的
-- 所有难度都在日常对话/叙述范围内，不要出现书面论文用语
-- 词汇提示给全（动词和有汉字的词都要给读音）
-- 标记 difficulty={next_diff}
-
-## 输出格式
-```json
-{{
+    # 根据题型选择不同的输出格式（M4）
+    if qt == "fill_blank":
+        harder_desc = desc.replace("要表达的句子", "填空句")
+        output_format = f"""{{
   "id": 99,
+  "question_type": "fill_blank",
+  "grammar_point": "{grammar_point}",
+  "scene": "新的生活场景",
+  "stem": "包含＿＿＿＿的日语句子（难度 Lv{next_diff}）",
+  "options": ["选项A", "选项B", "选项C", "选项D"],
+  "correct_option": 0,
+  "blank_position": "空白的位置描述",
+  "explanation": "为什么正确答案是对的",
+  "hints": ["词汇1（よみ）- 意思", "词汇2（よみ）- 意思"],
+  "difficulty": {next_diff},
+  "is_extra": false,
+  "extra_level": null
+}}"""
+        extra_req = "- 干扰项基于常见学习者错误设计\n- 空白处用 ＿＿＿＿ 表示\n- correct_option 为 0-based 索引\n- 所有 4 个选项都必须是正确自然的日语"
+        original_desc = f"- stem（含空白）：{original_question.get('stem', '')}\n- 正确答案索引：{original_question.get('correct_option', '')}"
+    else:
+        harder_desc = desc
+        output_format = f"""{{
+  "id": 99,
+  "question_type": "translation",
   "grammar_point": "{grammar_point}",
   "scene": "新的生活场景",
   "chinese": "要表达的意思（2~4句，难度对应 Lv{next_diff}）",
@@ -245,7 +273,33 @@ def build_harder_question_prompt(grammar_point: str, level: str, original_questi
   "difficulty": {next_diff},
   "is_extra": false,
   "extra_level": null
-}}
+}}"""
+        extra_req = ""
+        original_desc = f"- 场景：{original_question.get('scene', '')}\n- 要表达的意思：{original_question.get('chinese', '')}"
+
+    prompt = f"""你是日语教师。学生上一题答得很好，现在要加大难度！
+
+学生级别：{level}
+当前语法点：{grammar_point}
+当前难度：Lv{current_difficulty} → 升级到 Lv{next_diff}
+
+## 原题（参考，不要重复）
+{original_desc}
+{allowed_grammar}
+
+## 升级要求
+{harder_desc}
+
+- 核心语法点仍然是「{grammar_point}」
+- 场景换一个新的
+- 所有难度都在日常对话/叙述范围内，不要出现书面论文用语
+- 词汇提示给全（动词和有汉字的词都要给读音）
+- 标记 difficulty={next_diff}
+{extra_req}
+
+## 输出格式
+```json
+{output_format}
 ```
 
 只返回 JSON。"""
