@@ -29,7 +29,7 @@
 | 📅 打卡月历 | 扫描历史记录，统计连续打卡天数 |
 | 📋 复习笔记 | 完成一轮自动生成 Markdown 复习报告，可下载 |
 | 🌓 深色模式 | 支持浅色/深色/跟随系统 |
-| 📚 教材支持 | 内置标日知识库，选课自动限定单词范围 |
+| 📚 语法范围 | 内置 N5~N1 全套 508 个 JLPT 语法点，可多选聚焦出题 |
 
 ---
 
@@ -69,7 +69,7 @@ KOTOBA·AI/
 │
 ├── prompts/                # AI Prompt 模板（含 qa_parse.py）
 ├── static/                 # 前端 HTML/CSS/JS + logo 资源
-├── knowledge_base/         # 标日教材语法库
+├── knowledge_base/         # JLPT N5~N1 语法库（jlpt_cards/ 508 点）
 ├── ocr_models/             # 日文 OCR 识别模型（japan_PP-OCRv4）
 │
 ├── config.json             # 用户配置（本地，不入库）

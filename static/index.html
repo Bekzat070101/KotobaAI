@@ -76,7 +76,7 @@
                 <div class="guide-bento-card card" style="grid-area: b;">
                     <div class="guide-bento-icon"><i data-lucide="book-open" style="width:24px;height:24px"></i></div>
                     <h3>搭配教材</h3>
-                    <p>内置标日知识库，选课即用，出题不超纲</p>
+                    <p>内置 N5~N1 全套语法点，选级即用，出题不超纲</p>
                 </div>
                 <div class="guide-bento-card card" style="grid-area: c;">
                     <div class="guide-bento-icon"><i data-lucide="brain" style="width:24px;height:24px"></i></div>
@@ -184,24 +184,23 @@
                     <div class="card config-card" data-glow>
                         <div class="config-card-header">
                             <i data-lucide="book-open" style="width:18px;height:18px"></i>
-                            <span>教材选择</span>
+                            <span>语法范围</span>
                             <span class="badge-optional">可选</span>
                         </div>
                         <div class="config-card-grid">
                             <div class="config-card-field">
-                                <label class="config-card-label">选择教材</label>
+                                <label class="config-card-label">选择级别</label>
                                 <select id="textbook-select" class="input">
-                                    <option value="">自由模式（不使用教材）</option>
-                                </select>
-                            </div>
-                            <div class="config-card-field">
-                                <label class="config-card-label">分册</label>
-                                <select id="lesson-select" class="input" style="display: none;">
-                                    <option value="0">全部课程</option>
+                                    <option value="">自由模式（不限定语法范围）</option>
                                 </select>
                             </div>
                         </div>
-                        <p class="input-hint" id="textbook-hint">选课后自动限定出题范围</p>
+                        <div class="config-card-field" id="grammar-tags-field" style="display: none;">
+                            <label class="config-card-label">已选语法点</label>
+                            <div id="grammar-tags-display" class="grammar-tags-display"></div>
+                            <button id="btn-edit-grammar" class="btn btn-text" style="display: none;">编辑选择</button>
+                        </div>
+                        <p class="input-hint" id="textbook-hint">选择级别后可指定具体的语法点范围</p>
                     </div>
 
                     <!-- 级别选择 -->
@@ -527,6 +526,31 @@
             <div class="modal-actions">
                 <button id="btn-save-yes" class="btn btn-primary">保存到知识库</button>
                 <button id="btn-save-no" class="btn btn-text">不保存，仅这次练习</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 弹窗：选择语法点 ==================== -->
+    <div id="modal-grammar" class="modal-overlay" style="display: none;">
+        <div class="modal-card grammar-modal-card">
+            <div class="grammar-modal-header">
+                <h2 class="modal-title" id="grammar-modal-title">选择语法点</h2>
+                <button id="btn-grammar-close" class="btn-icon" title="关闭">&times;</button>
+            </div>
+            <div class="grammar-modal-search">
+                <input type="text" id="grammar-search" class="input" placeholder="搜索语法点..." autocomplete="off">
+            </div>
+            <div class="grammar-modal-actions-bar">
+                <button id="btn-grammar-all" class="btn btn-text">全选</button>
+                <button id="btn-grammar-none" class="btn btn-text">取消全选</button>
+                <span class="grammar-count" id="grammar-count">0 / 0 已选</span>
+            </div>
+            <div class="grammar-modal-list" id="grammar-modal-list">
+                <!-- 由 JS 动态渲染复选框 -->
+            </div>
+            <div class="modal-actions grammar-modal-footer">
+                <button id="btn-grammar-confirm" class="btn btn-primary">确认选择</button>
+                <button id="btn-grammar-cancel" class="btn btn-text">取消</button>
             </div>
         </div>
     </div>
@@ -862,6 +886,7 @@
                             <li><strong>OCR 识别：</strong>拍照或截图上传日文题目，自动识别文字后直接解析</li>
                             <li><strong>PDF 识别：</strong>上传 PDF 文档，自动提取文本参与解析</li>
                             <li><strong>知识库重构：</strong>答疑解析出的知识点可一键入库，内置 TF-IDF 检索让答疑更智能，支持待确认池手动确认</li>
+                            <li><strong>内置语法库：</strong>内置 N5~N1 全套 508 个 JLPT 语法点，选择教材级别后可多选语法点，与笔记结合聚焦出题</li>
                             <li><strong>设置页重构：</strong>改为「学习数据 / 功能设置」两列布局，打卡日历更紧凑，学习目标、显示模式一目了然</li>
                             <li><strong>学习数据导入导出：</strong>一键导出知识库、学习记录、打卡、错题本等全部学习数据，更新版本或换电脑时可导入恢复，学习成果不丢失</li>
                             <li><strong>题型优化：</strong>新增填空、混合题型，填空采用确定性判分，零 AI 成本</li>

@@ -105,17 +105,17 @@ def build_generate_questions_prompt(notes: str, level: str, learned_content: lis
 {chr(10).join(words_desc)}
 """
 
-    # 答疑联动 —— 专注知识点（M4 新增）
+    # 专注知识点 —— 由答疑联动 / 教材语法点多选而来（M4 + M5.x）
     focus_section = ""
     if focus_tags and len(focus_tags) > 0:
         tag_list = "\n".join([f"  - {t}" for t in focus_tags])
         focus_section = f"""
-## 🎯 本次练习专注知识点（从答疑联动而来）
+## 🎯 本次练习专注知识点
 
-以下知识点是用户刚在答疑中遇到的薄弱项，请**优先围绕这些知识点出题**：
+以下知识点是本次练习的核心目标（来自答疑联动或教材语法点多选），请**优先围绕这些知识点出题**：
 {tag_list}
 
-所有题目必须紧扣上述知识点，这是本次练习的核心目标。笔记中其他语法点可作为辅助。
+所有题目必须紧扣上述知识点。笔记中其他语法点可作为辅助。
 """
 
     # 题型分叉 —— 格式说明（M4 新增）
@@ -177,7 +177,7 @@ def build_generate_questions_prompt(notes: str, level: str, learned_content: lis
 
 ## 学生今日语法笔记
 ```
-{notes}
+{notes if notes.strip() else "（未提供笔记——请严格依据下方「本次练习专注知识点」列出的语法点出题）"}
 ```
 {focus_section}{learned_section}{textbook_section}{vocab_section}{vocab_bank_section}
 ---

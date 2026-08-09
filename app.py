@@ -229,8 +229,8 @@ def generate_questions():
     question_type = data.get("question_type", "translation").strip()  # M4: 题型
     focus_tags = data.get("focus_tags", [])  # M4: 答疑联动知识点
 
-    if not notes:
-        return jsonify({"error": "笔记内容不能为空"}), 400
+    if not notes and not focus_tags:
+        return jsonify({"error": "请提供语法笔记或选择语法点范围"}), 400
 
     # 校验题型参数（M4）
     VALID_QUESTION_TYPES = ("translation", "fill_blank", "mixed")

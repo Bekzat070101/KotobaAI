@@ -17,6 +17,7 @@ const AppState = {
     historyDate: null,      // 查看历史详情时的日期
     questionType: "translation",  // M4: 题型 "translation" | "fill_blank" | "mixed"
     fillblankSelected: null,      // M4: 填空选择题选中的选项索引
+    selectedGrammarPoints: [],     // M5.x: 教材语法点多选 [{point, explanation}]
 };
 
 // --- 工具函数 ---
@@ -340,8 +341,9 @@ function showMainScreen() {
 
 async function startTraining() {
     const notes = $("#notes-input").value.trim();
-    if (!notes) {
-        showError("main-error", "请先粘贴语法笔记");
+    const focusTags = (AppState.selectedGrammarPoints || []).map(g => g.point);
+    if (!notes && focusTags.length === 0) {
+        showError("main-error", "请先粘贴语法笔记，或选择语法点范围");
         return;
     }
 
@@ -349,13 +351,13 @@ async function startTraining() {
     const vocabEnabled = $("#vocab-enabled").checked;
     const vocabText = vocabEnabled ? $("#vocab-input").value.trim() : "";
 
-    showLoading("正在分析笔记，生成题目...");
+    showLoading("正在生成题目...");
     hide($("#main-error"));
 
     try {
         const result = await api("/api/generate_questions", {
             method: "POST",
-            body: JSON.stringify({ notes, level, vocabulary: vocabText, textbook_vocab: currentBookVocab, question_type: AppState.questionType }),
+            body: JSON.stringify({ notes, level, vocabulary: vocabText, textbook_vocab: currentBookVocab, question_type: AppState.questionType, focus_tags: focusTags }),
         });
 
         if (!result.success || !result.data) {
@@ -1521,48 +1523,188 @@ async function loadReviewStatus() {
 // 教材选择
 // ============================================================
 let textbookData = {};
-let currentBookVocab = [];
+let currentBookVocab = [];          // JLPT 卡片无词汇，保持空数组（向后兼容 POST body）
+let selectedGrammarLevelId = "";    // 当前语法点选择所属的级别卷 id
+let grammarModalData = [];          // 当前弹窗内展示的语法点列表
 
 async function loadTextbookOptions() {
     try {
         const data = await api("/api/knowledge_base");
         const select = $("#textbook-select");
         if (!select) return;
-        select.innerHTML = '<option value="">自由模式（不使用教材）</option><option disabled>──── 教材适配即将推出 ────</option>';
-        for (const tb of data.textbooks || [])
-            for (const vol of tb.volumes || []) {
-                const opt = document.createElement("option");
-                opt.value = vol.id; opt.textContent = `${tb.name} ${vol.name}（${vol.level}）🔒 敬请期待后续更新`;
-                opt.disabled = true;
-                select.appendChild(opt);
-            }
+        select.innerHTML = '<option value="">自由模式（不限定语法范围）</option>';
+        // 只展示 jlpt_cards 教材（N5~N1）
+        const jlpt = (data.textbooks || []).find(tb => tb.id === "jlpt_cards");
+        const volumes = jlpt ? (jlpt.volumes || []) : [];
+        volumes.forEach(vol => {
+            const opt = document.createElement("option");
+            opt.value = vol.id;
+            opt.textContent = vol.name;  // "N5"、"N4"…
+            select.appendChild(opt);
+        });
         select.onchange = async () => {
             const volId = select.value;
-            const lessonSelect = $("#lesson-select");
-            if (!volId) { lessonSelect.style.display = "none"; currentBookVocab = []; return; }
-            if (!textbookData[volId]) {
-                try { textbookData[volId] = await api(`/api/knowledge_base/${volId}`); }
-                catch { textbookData[volId] = { lessons: [] }; }
+            if (!volId) {
+                // 自由模式：清空选择
+                AppState.selectedGrammarPoints = [];
+                selectedGrammarLevelId = "";
+                updateGrammarTagsDisplay();
+                updateGrammarHint();
+                return;
             }
-            const lessons = textbookData[volId].lessons || [];
-            lessonSelect.innerHTML = '<option value="0">全部课程</option>';
-            lessons.forEach(l => { const o = document.createElement("option"); o.value = l.lesson; o.textContent = `第${l.lesson}课 — ${l.title}`; lessonSelect.appendChild(o); });
-            lessonSelect.style.display = "";
-            updateCurrentBookVocab(volId, 0);
+            // 切换级别时清空上一个级别的选择，保证下拉与标签一致
+            if (selectedGrammarLevelId && selectedGrammarLevelId !== volId) {
+                AppState.selectedGrammarPoints = [];
+            }
+            // 选中级别即记录，字段常驻显示（即使取消弹窗也能通过「编辑选择」重新打开）
+            selectedGrammarLevelId = volId;
+            updateGrammarTagsDisplay();
+            updateGrammarHint();
+            const vol = volumes.find(v => v.id === volId);
+            await openGrammarModal(volId, vol ? vol.name : volId);
         };
-        const lessonSelect = $("#lesson-select");
-        lessonSelect.onchange = () => { const volId = $("#textbook-select").value; updateCurrentBookVocab(volId, parseInt(lessonSelect.value)); };
+        // 弹窗按钮事件（每次绑定幂等，覆盖式赋值）
+        $("#btn-grammar-all").onclick = () => {
+            $$("#grammar-modal-list .grammar-check-item:not(.filtered-out) input").forEach(cb => cb.checked = true);
+            updateGrammarCount();
+        };
+        $("#btn-grammar-none").onclick = () => {
+            $$("#grammar-modal-list .grammar-check-item:not(.filtered-out) input").forEach(cb => cb.checked = false);
+            updateGrammarCount();
+        };
+        $("#grammar-search").oninput = (e) => renderGrammarCheckboxes(e.target.value);
+        $("#btn-grammar-confirm").onclick = confirmGrammarSelection;
+        $("#btn-grammar-cancel").onclick = () => hide($("#modal-grammar"));
+        $("#btn-grammar-close").onclick = () => hide($("#modal-grammar"));
+        $("#modal-grammar").onclick = (e) => {
+            if (e.target === $("#modal-grammar")) hide($("#modal-grammar"));
+        };
+        $("#btn-edit-grammar").onclick = async () => {
+            const volId = $("#textbook-select").value;
+            if (!volId) return;
+            const vol = volumes.find(v => v.id === volId);
+            await openGrammarModal(volId, vol ? vol.name : volId);
+        };
     } catch { /* 静默 */ }
 }
 
-function updateCurrentBookVocab(volId, lessonNo) {
-    const data = textbookData[volId]; if (!data) return;
-    const lessons = data.lessons || []; let vocab = [];
-    if (lessonNo === 0) for (const l of lessons) vocab = vocab.concat(l.vocabulary || []);
-    else { const lesson = lessons.find(l => l.lesson === lessonNo); if (lesson) vocab = lesson.vocabulary || []; }
-    currentBookVocab = vocab;
+/** 打开语法点多选弹窗，展示指定级别的全部语法点（预勾选当前已选）。 */
+async function openGrammarModal(volId, levelName) {
+    const modal = $("#modal-grammar");
+    if (!modal) return;
+    if (!textbookData[volId]) {
+        try { textbookData[volId] = await api(`/api/knowledge_base/${volId}`); }
+        catch { textbookData[volId] = { lessons: [] }; }
+    }
+    // 展平所有 lesson 的 grammar
+    let points = [];
+    (textbookData[volId].lessons || []).forEach(l => { points = points.concat(l.grammar || []); });
+    grammarModalData = points;
+    const title = $("#grammar-modal-title");
+    if (title) title.textContent = `选择 ${levelName} 语法点`;
+    const search = $("#grammar-search");
+    if (search) search.value = "";
+    renderGrammarCheckboxes("");
+    show(modal);
+}
+
+/** 渲染弹窗内复选框列表，可按关键词过滤。 */
+function renderGrammarCheckboxes(filterText) {
+    const list = $("#grammar-modal-list");
+    if (!list) return;
+    const kw = (filterText || "").trim().toLowerCase();
+    list.innerHTML = "";
+    let visible = 0;
+    grammarModalData.forEach(g => {
+        const hay = (g.point || "") + " " + (g.explanation || "");
+        const matches = !kw || hay.toLowerCase().includes(kw);
+        if (!matches) return;
+        visible++;
+        const already = AppState.selectedGrammarPoints.some(p => p.point === g.point);
+        const item = document.createElement("label");
+        item.className = "grammar-check-item";
+        item.innerHTML =
+            `<input type="checkbox"${already ? " checked" : ""}>` +
+            `<span class="grammar-check-body">` +
+            `<span class="grammar-point">${escapeHtml(g.point)}</span>` +
+            `<span class="grammar-explain">${escapeHtml(g.explanation || "")}</span>` +
+            `</span>`;
+        list.appendChild(item);
+    });
+    if (visible === 0) {
+        list.innerHTML = '<p style="padding:var(--space-md) 0;text-align:center;color:var(--text-tertiary);font-size:14px;">没有匹配的语法点</p>';
+    }
+    updateGrammarCount();
+}
+
+/** 更新弹窗底部已选计数。 */
+function updateGrammarCount() {
+    const count = $("#grammar-count");
+    if (!count) return;
+    const checked = $$("#grammar-modal-list input[type=\"checkbox\"]:checked").length;
+    count.textContent = `${checked} / ${grammarModalData.length} 已选`;
+}
+
+/** 确认弹窗选择：把勾选的语法点写入 AppState 并渲染标签。 */
+function confirmGrammarSelection() {
+    const checked = $$("#grammar-modal-list input[type=\"checkbox\"]:checked");
+    const picked = [];
+    checked.forEach(cb => {
+        const point = cb.closest(".grammar-check-item").querySelector(".grammar-point").textContent;
+        const g = grammarModalData.find(x => x.point === point);
+        if (g) picked.push({ point: g.point, explanation: g.explanation || "" });
+    });
+    AppState.selectedGrammarPoints = picked;
+    selectedGrammarLevelId = $("#textbook-select").value;
+    hide($("#modal-grammar"));
+    updateGrammarTagsDisplay();
+    updateGrammarHint();
+}
+
+/** 渲染教材卡片下方的已选语法点标签（级别激活时字段常驻显示）。 */
+function updateGrammarTagsDisplay() {
+    const field = $("#grammar-tags-field");
+    const display = $("#grammar-tags-display");
+    const editBtn = $("#btn-edit-grammar");
+    if (!field || !display) return;
+    const pts = AppState.selectedGrammarPoints || [];
+    if (!selectedGrammarLevelId) {
+        // 未选择任何级别：隐藏字段
+        field.style.display = "none";
+        return;
+    }
+    field.style.display = "";
+    if (pts.length > 0) {
+        display.innerHTML = pts.map((g, i) =>
+            `<span class="grammar-tag-chip">${escapeHtml(g.point)}` +
+            `<span class="tag-remove" data-idx="${i}" title="移除">×</span></span>`
+        ).join("");
+    } else {
+        display.innerHTML = '<span class="grammar-tags-empty">未选择语法点</span>';
+    }
+    if (editBtn) editBtn.style.display = "";
+    display.querySelectorAll(".tag-remove").forEach(el => {
+        el.onclick = (e) => {
+            e.stopPropagation();
+            AppState.selectedGrammarPoints.splice(parseInt(el.dataset.idx, 10), 1);
+            updateGrammarTagsDisplay();
+            updateGrammarHint();
+        };
+    });
+}
+
+/** 更新教材卡片底部提示文字。 */
+function updateGrammarHint() {
     const hint = $("#textbook-hint");
-    if (hint) hint.textContent = vocab.length > 0 ? `已加载 ${vocab.length} 个教材单词，出题将限制在此范围内` : "选课后自动加载教材单词和语法点，出题不超纲";
+    if (!hint) return;
+    const count = (AppState.selectedGrammarPoints || []).length;
+    if (!selectedGrammarLevelId) {
+        hint.textContent = "选择级别后可指定具体的语法点范围";
+    } else if (count > 0) {
+        hint.textContent = `已选择 ${count} 个语法点，出题将聚焦这些知识点`;
+    } else {
+        hint.textContent = "已选择级别，可点击「编辑选择」指定语法点（不指定则出题不受语法点限制）";
+    }
 }
 
 // ============================================================

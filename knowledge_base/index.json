@@ -1,14 +1,44 @@
 {
   "textbooks": [
     {
-      "id": "standard_jp",
-      "name": "新版中日交流标准日本语",
+      "id": "jlpt_cards",
+      "name": "JLPT 文法",
       "volumes": [
-        { "id": "beginner_1", "name": "初级上册", "lessons": "第1-24课", "level": "N5", "file": "standard_jp/beginner_1.json" },
-        { "id": "beginner_2", "name": "初级下册", "lessons": "第25-48课", "level": "N4", "file": "standard_jp/beginner_2.json" },
-        { "id": "intermediate_1", "name": "中级上册", "lessons": "第1-16课", "level": "N3", "file": "standard_jp/intermediate_1.json" },
-        { "id": "intermediate_2", "name": "中级下册", "lessons": "第17-32课", "level": "N2", "file": "standard_jp/intermediate_2.json" },
-        { "id": "advanced", "name": "高级上下册", "lessons": "第1-24课", "level": "N1", "file": "standard_jp/advanced.json" }
+        {
+          "id": "n5",
+          "name": "N5",
+          "lessons": "35 項目",
+          "level": "N5",
+          "file": "jlpt_cards/n5.json"
+        },
+        {
+          "id": "n4",
+          "name": "N4",
+          "lessons": "75 項目",
+          "level": "N4",
+          "file": "jlpt_cards/n4.json"
+        },
+        {
+          "id": "n3",
+          "name": "N3",
+          "lessons": "137 項目",
+          "level": "N3",
+          "file": "jlpt_cards/n3.json"
+        },
+        {
+          "id": "n2",
+          "name": "N2",
+          "lessons": "133 項目",
+          "level": "N2",
+          "file": "jlpt_cards/n2.json"
+        },
+        {
+          "id": "n1",
+          "name": "N1",
+          "lessons": "128 項目",
+          "level": "N1",
+          "file": "jlpt_cards/n1.json"
+        }
       ]
     }
   ]
