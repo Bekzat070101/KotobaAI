@@ -14,6 +14,8 @@ import sys
 from collections import Counter
 from datetime import datetime
 
+import paths
+
 from qa_pipeline import parse_question
 
 PENDING_FILE = "pending_knowledge.json"
@@ -36,6 +38,7 @@ def _resource_path(relative_path):
 # ---------- 工具 ----------
 def load_json(filepath, default=None):
     """安全加载 JSON 文件，文件不存在或损坏时返回默认值。"""
+    filepath = paths.resolve(filepath)  # 统一数据目录；绝对路径（内置只读资源）原样通过
     if default is None:
         default = {}
     if not os.path.exists(filepath):
@@ -49,6 +52,7 @@ def load_json(filepath, default=None):
 
 def save_json(filepath, data):
     """保存 JSON 文件，自动创建目录。"""
+    filepath = paths.resolve(filepath)  # 统一数据目录；绝对路径（内置只读资源）原样通过
     dirname = os.path.dirname(filepath)
     if dirname and not os.path.exists(dirname):
         os.makedirs(dirname)

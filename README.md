@@ -8,7 +8,16 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/Bekzat070101/KotobaAI/releases) 下载 `KOTOBA-AI.exe`，双击运行即可。首次使用需准备 [DeepSeek API Key](https://platform.deepseek.com/api_keys)。
+从 [GitHub Releases](https://github.com/Bekzat070101/KotobaAI/releases) 下载，两种方式任选：
+
+- **安装版**：`KOTOBA-AI-Setup-*.exe` —— 建议大部分用户使用。按用户安装（无需管理员权限），开始菜单/桌面快捷方式，卸载时可选择是否删除学习数据。
+- **便携版**：`KOTOBA-AI-portable.zip` —— 解压即用，无需安装，适合放在 U 盘/移动目录。
+
+**更新**：直接下载新版 `Setup.exe` 运行即可**覆盖升级**，无需卸载重装，学习数据不会丢失（安装器会记住上次的安装路径，自定义路径也能准确替换）。
+
+> 若杀毒软件（360/腾讯管家/火绒等）误报，请在杀软中放行。项目为 GPL-3.0 开源，代码完全可见，可自行用源码验证。
+
+首次使用需准备 [DeepSeek API Key](https://platform.deepseek.com/api_keys)。
 
 ---
 
@@ -38,6 +47,16 @@
 - API Key、学习数据全部存储在本地 JSON 文件
 - 除调用 DeepSeek API 外无需联网
 - 不上传、不收集、不埋点
+
+## 数据存储
+
+所有用户数据（配置、答题进度、错题本、知识库、历史记录、复习笔记等）默认存放在：
+
+```
+%APPDATA%\KOTOBA-AI
+```
+
+可在**设置 → 功能设置 → 数据目录**中更改到任意文件夹（更改时自动迁移现有数据并重启生效）。数据与程序安装目录完全分离，升级/卸载程序不会影响学习数据；卸载时也可选择一并删除。
 - GPL-3.0 开源，任何使用/修改/分发都必须保留开源，不得闭源商用
 
 ---

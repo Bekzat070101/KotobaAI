@@ -12,9 +12,11 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 
+import paths
+
 from prompts.qa_parse import VALID_TYPES, build_classify_prompt, build_parse_prompt
 
-CACHE_FILE = os.path.join("cache", "qa_cache.json")
+CACHE_FILE = os.path.join("cache", "qa_cache.json")  # 相对路径，实际使用处 resolve 到数据目录
 CACHE_TTL_DAYS = 30          # CC-1：冷数据 30 天清理
 MAX_QA_LENGTH = 50000        # 题目内容最大长度
 MAX_TAGS = 10                # 单个结果最多保留知识点数
@@ -100,20 +102,22 @@ def _cache_key(content: str, answer_key: str, user_answer: str, mode: str, detai
 
 
 def _load_cache() -> dict:
-    if not os.path.exists(CACHE_FILE):
+    cache_file = paths.resolve(CACHE_FILE)
+    if not os.path.exists(cache_file):
         return {"entries": {}}
     try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        with open(cache_file, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
         return {"entries": {}}
 
 
 def _save_cache(cache: dict) -> None:
-    d = os.path.dirname(CACHE_FILE)
+    cache_file = paths.resolve(CACHE_FILE)
+    d = os.path.dirname(cache_file)
     if d and not os.path.exists(d):
         os.makedirs(d)
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+    with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 

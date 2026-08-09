@@ -104,6 +104,8 @@ function showScreen(name) {
     $$(".screen").forEach(s => hide(s));
     const screen = $(`#screen-${name}`);
     if (screen) show(screen);
+    // 切页后回到顶部（各页面共用 document 滚动位置，不置顶会导致残留旧位置）
+    window.scrollTo(0, 0);
 }
 
 function showLoading(text = "加载中...") {
@@ -2100,6 +2102,14 @@ function showSettingsScreen() {
                         </div>
                         <button class="btn btn-secondary btn-sm" id="btn-clear-data">清除</button>
                     </div>
+                    <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:var(--space-sm);padding-top:var(--space-sm)">
+                        <div class="settings-item-title"><i data-lucide="folder" style="width:18px;height:18px"></i> 数据目录</div>
+                        <div class="settings-item-desc" id="settings-data-dir-desc" style="word-break:break-all">加载中...</div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end">
+                            <button class="btn btn-secondary btn-sm" id="btn-open-data-dir"><i data-lucide="external-link" style="width:14px;height:14px"></i> 打开文件夹</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-change-data-dir"><i data-lucide="folder-cog" style="width:14px;height:14px"></i> 更改目录</button>
+                        </div>
+                    </div>
                     <div class="settings-item clickable" id="settings-privacy">
                         <div class="settings-item-info">
                             <div class="settings-item-title"><i data-lucide="shield" style="width:18px;height:18px"></i> 隐私政策</div>
@@ -2189,6 +2199,57 @@ function showSettingsScreen() {
             }
         };
     }
+
+    // 数据目录（统一存储）：展示当前目录 + 打开 / 更改
+    (async () => {
+        try {
+            const info = await api("/api/data_dir");
+            const dirEl = $("#settings-data-dir-desc");
+            if (dirEl) {
+                const tag = info.customized ? "（自定义）" : "（默认）";
+                dirEl.textContent = info.dir + " " + tag;
+            }
+        } catch { /* 静默 */ }
+    })();
+    const openDirBtn = $("#btn-open-data-dir");
+    if (openDirBtn) openDirBtn.onclick = async () => {
+        try {
+            // pywebview 原生：直接调 JsApi；浏览器模式降级为后端 os.startfile
+            if (window.pywebview && window.pywebview.api
+                && typeof window.pywebview.api.open_data_dir === "function") {
+                await window.pywebview.api.open_data_dir();
+            } else {
+                await api("/api/data_dir/open", { method: "POST" });
+            }
+        } catch (e) {
+            alert("无法打开数据目录：" + ((e && e.message) || e));
+        }
+    };
+    const changeDirBtn = $("#btn-change-data-dir");
+    if (changeDirBtn) changeDirBtn.onclick = async () => {
+        let newDir = "";
+        if (window.pywebview && window.pywebview.api
+            && typeof window.pywebview.api.choose_data_dir === "function") {
+            const r = await window.pywebview.api.choose_data_dir();
+            if (r && r.cancelled) return;
+            if (r && r.success) newDir = r.path;
+            else { alert((r && r.error) || "无法选择文件夹"); return; }
+        } else {
+            newDir = prompt("请输入新的数据目录绝对路径：");
+            if (!newDir) return;
+        }
+        if (!confirm("将数据目录更改为：\n" + newDir + "\n\n所有学习数据会迁移到新目录，软件将自动重启。是否继续？")) return;
+        try {
+            const res = await api("/api/data_dir/change", {
+                method: "POST",
+                body: JSON.stringify({ path: newDir }),
+            });
+            alert((res.migrated ? "已迁移 " + res.migrated + " 个文件。" : "目录已设置。") + "软件即将自动重启…");
+            // 服务端已安排延迟重启，此处无需额外动作
+        } catch (e) {
+            alert("更改失败：" + ((e && e.message) || e));
+        }
+    };
 
     // 错题本入口（M4：从个人页迁移）
     const wrongEntry = $("#settings-wrong");

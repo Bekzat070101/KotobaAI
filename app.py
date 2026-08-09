@@ -10,6 +10,8 @@ import json
 import os
 from datetime import datetime, timedelta
 
+import paths
+
 from flask import Flask, jsonify, request, send_from_directory
 from openai import OpenAI
 
@@ -102,6 +104,7 @@ def sanitize_date(date_str):
 
 def load_json(filepath, default=None):
     """安全加载 JSON 文件，文件不存在时返回默认值。"""
+    filepath = paths.resolve(filepath)  # 统一数据目录
     if default is None:
         default = {}
     if not os.path.exists(filepath):
@@ -115,6 +118,7 @@ def load_json(filepath, default=None):
 
 def save_json(filepath, data):
     """保存 JSON 文件，自动创建目录。"""
+    filepath = paths.resolve(filepath)  # 统一数据目录
     dirname = os.path.dirname(filepath)
     if dirname and not os.path.exists(dirname):
         os.makedirs(dirname)
@@ -504,7 +508,7 @@ def generate_summary():
     # 保存 Markdown 文件
     today = datetime.now().strftime("%Y-%m-%d")
     md_filename = f"review_{today}.md"
-    md_path = os.path.join("output", md_filename)
+    md_path = paths.data_path("output", md_filename)
     save_json(md_path.replace(".md", ".json"), {})  # 不适用，直接写 md
     dirname = os.path.dirname(md_path)
     if dirname and not os.path.exists(dirname):
@@ -792,8 +796,9 @@ def handle_progress():
         return jsonify({"success": True})
 
     elif request.method == "DELETE":
-        if os.path.exists("progress.json"):
-            os.remove("progress.json")
+        progress_path = paths.data_path("progress.json")
+        if os.path.exists(progress_path):
+            os.remove(progress_path)
         return jsonify({"success": True})
 
 
@@ -1018,23 +1023,24 @@ def delete_wrong_item(item_id):
 # --- 重置所有数据 ---
 @app.route("/api/reset", methods=["POST"])
 def reset_all_data():
-    """清除所有本地数据文件并重置为默认状态。"""
-    data_files = [
-        "config.json",
-        "progress.json",
-        "learned_content.json",
-        "wrong_book.json",
-        "vocabulary.json",
-    ]
-    for f in data_files:
-        try:
-            if os.path.exists(f):
-                os.remove(f)
-        except OSError:
-            pass
+    """清空数据目录下全部本地数据并重置为默认状态。"""
+    import shutil
+    data_dir = paths.get_data_dir()
+    cleared = 0
+    if os.path.isdir(data_dir):
+        for name in os.listdir(data_dir):
+            p = os.path.join(data_dir, name)
+            try:
+                if os.path.isdir(p):
+                    shutil.rmtree(p)
+                else:
+                    os.remove(p)
+                cleared += 1
+            except OSError:
+                pass
     # 重建 config.json 为空配置
     save_json("config.json", {"api_key": "", "level": "N3", "model": "deepseek-chat"})
-    return jsonify({"success": True})
+    return jsonify({"success": True, "cleared": cleared})
 
 
 # --- 学习数据导出 / 导入（版本更新迁移不丢失数据） ---
@@ -1055,9 +1061,9 @@ def _collect_user_data():
         "qa_cache": load_json("cache/qa_cache.json"),
         "history": {
             f[:-5]: load_json(os.path.join("history", f))
-            for f in sorted(os.listdir("history"))
+            for f in sorted(os.listdir(paths.data_path("history")))
             if f.endswith(".json")
-        } if os.path.exists("history") else {},
+        } if os.path.exists(paths.data_path("history")) else {},
     }
 
 
@@ -1071,7 +1077,7 @@ def export_user_data():
     # 用绝对路径：PyInstaller 打包后 app.root_path 指向 _MEIPASS 临时目录，
     # 相对 "output" 会被解析到 _MEIPASS 下导致 NotFound，绝对路径不受影响。
     return send_from_directory(
-        os.path.abspath("output"), filename, as_attachment=True, download_name=filename
+        paths.data_path("output"), filename, as_attachment=True, download_name=filename
     )
 
 
@@ -1115,6 +1121,55 @@ def import_user_data():
     return jsonify({"success": True, "message": "学习数据导入成功"})
 
 
+# --- 数据目录管理（统一存储） ---
+@app.route("/api/data_dir", methods=["GET"])
+def data_dir_info():
+    """返回当前数据目录信息（设置页展示 + 前端判断是否已自定义）。"""
+    return jsonify({"success": True, **paths.get_data_dir_info()})
+
+
+@app.route("/api/data_dir/open", methods=["POST"])
+def data_dir_open():
+    """在文件管理器中打开当前数据目录。"""
+    try:
+        os.startfile(paths.get_data_dir())
+        return jsonify({"success": True})
+    except OSError as e:
+        return jsonify({"error": f"无法打开数据目录：{e}"}), 500
+
+
+@app.route("/api/data_dir/change", methods=["POST"])
+def data_dir_change():
+    """更改数据目录：迁移旧数据到新目录 → 写指针 → 延迟重启应用生效。"""
+    data = request.get_json(silent=True) or {}
+    new_dir = data.get("path", "").strip()
+    if not new_dir:
+        return jsonify({"error": "请选择数据目录"}), 400
+    try:
+        migrated = paths.set_data_dir(new_dir)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    # 延迟重启，让前端先渲染「迁移完成，即将重启」的提示
+    from threading import Timer
+    Timer(2.0, restart_app).start()
+    return jsonify({"success": True, "migrated": migrated})
+
+
+def restart_app():
+    """重启应用（更换数据目录后生效）。frozen 下重启 exe，开发模式重启 python app.py。"""
+    import subprocess
+    try:
+        if hasattr(sys, "_MEIPASS"):
+            args = [sys.executable]
+        else:
+            args = [sys.executable, os.path.abspath(__file__)]
+        subprocess.Popen(args, close_fds=True)
+    except Exception as e:
+        print(f"[重启失败] {e}")
+        return
+    os._exit(0)
+
+
 @app.route("/api/shutdown", methods=["POST"])
 def shutdown():
     """前端关闭页面时调用，立即退出进程。"""
@@ -1124,7 +1179,7 @@ def shutdown():
 # --- 历史记录 ---
 @app.route("/api/history", methods=["GET"])
 def list_history():
-    history_dir = "history"
+    history_dir = paths.data_path("history")
     if not os.path.exists(history_dir):
         return jsonify({"files": []})
 
@@ -1162,21 +1217,21 @@ def download_markdown(date):
     if not date:
         return jsonify({"error": "日期格式无效"}), 400
     md_filename = f"review_{date}.md"
-    md_path = os.path.join("output", md_filename)
+    md_path = paths.data_path("output", md_filename)
     if not os.path.exists(md_path):
         # 尝试从 history 中找到对应的 md 文件名
-        history_path = os.path.join("history", f"{date}.json")
+        history_path = paths.data_path("history", f"{date}.json")
         history = load_json(history_path, None)
         if history and history.get("summary_md"):
             md_filename = history["summary_md"]
-            md_path = os.path.join("output", md_filename)
+            md_path = paths.data_path("output", md_filename)
 
     if not os.path.exists(md_path):
         return jsonify({"error": "文件不存在"}), 404
 
     # 用绝对路径：PyInstaller 打包后 app.root_path 指向 _MEIPASS，相对目录会解析到临时目录导致 NotFound
     return send_from_directory(
-        os.path.abspath("output"),
+        paths.data_path("output"),
         md_filename,
         as_attachment=True,
         download_name=md_filename,
@@ -1186,7 +1241,7 @@ def download_markdown(date):
 @app.route("/api/checkin", methods=["GET"])
 def get_checkin():
     """返回打卡数据：活跃日期列表、连续天数、本月天数。"""
-    history_dir = "history"
+    history_dir = paths.data_path("history")
     if not os.path.exists(history_dir):
         return jsonify({"dates": [], "streak": 0, "monthly_count": 0, "monthly_dates": []})
 
@@ -1228,6 +1283,11 @@ if __name__ == "__main__":
     from threading import Timer
     import webview
 
+    # 首次启动：若数据目录为空，把 cwd 遗留旧数据复制进去（复制不移动，幂等安全）
+    _migrated = paths.migrate_legacy_data()
+    if _migrated:
+        print(f"[数据迁移] 已从旧位置复制 {_migrated} 个文件到 {paths.get_data_dir()}")
+
     class JsApi:
         """暴露给前端 window.pywebview.api 的原生方法。"""
         def export_user_data_native(self):
@@ -1247,6 +1307,25 @@ if __name__ == "__main__":
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(payload, f, ensure_ascii=False, indent=2)
                 return {"success": True, "path": path}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def choose_data_dir(self):
+            """弹出系统文件夹选择对话框，返回所选路径（取消返回 cancelled）。"""
+            try:
+                result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG)
+                if not result:
+                    return {"cancelled": True}
+                path = result if isinstance(result, str) else result[0]
+                return {"success": True, "path": path}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        def open_data_dir(self):
+            """在文件管理器中打开当前数据目录。"""
+            try:
+                os.startfile(paths.get_data_dir())
+                return {"success": True}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 

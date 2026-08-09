@@ -27,7 +27,11 @@ static/logo.psd
 
 # Build output
 build/
+build-portable/
+build-install/
 dist/
+dist-portable/
+dist-install/
 *.spec
 
 # IDE
