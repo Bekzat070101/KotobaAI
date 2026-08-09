@@ -1888,6 +1888,10 @@ function init() {
     const announceCard = $("#guide-announce");
     if (announceCard) announceCard.onclick = showAnnounceModal;
 
+    // 首页 QQ 群卡片 → 复制群号
+    const qqCard = $("#btn-copy-qq");
+    if (qqCard) qqCard.onclick = copyQqGroupNumber;
+
     // 启动
     initGuideScreen();
 }
@@ -2336,6 +2340,32 @@ function showAnnounceModal() {
     $("#modal-announce").onclick = (e) => {
         if (e.target === $("#modal-announce")) hide($("#modal-announce"));
     };
+}
+
+// 首页 QQ 群卡片 → 复制群号到剪贴板（WebView2 navigator.clipboard + execCommand 兜底）
+const QQ_GROUP_NUMBER = "342747706";
+function copyQqGroupNumber() {
+    const hint = $("#qq-copy-hint");
+    const showDone = () => {
+        if (!hint) return;
+        hint.textContent = "已复制群号，打开 QQ 搜索加入";
+        setTimeout(() => { hint.textContent = "群号 " + QQ_GROUP_NUMBER + " · 点击复制"; }, 2500);
+    };
+    const fallback = () => {
+        const ta = document.createElement("textarea");
+        ta.value = QQ_GROUP_NUMBER;
+        ta.style.cssText = "position:fixed;opacity:0;";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        showDone();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(QQ_GROUP_NUMBER).then(showDone).catch(fallback);
+    } else {
+        fallback();
+    }
 }
 
 // ============================================================
