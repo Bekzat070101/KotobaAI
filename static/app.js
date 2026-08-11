@@ -2127,10 +2127,10 @@ function showSettingsScreen() {
                         </div>
                         <button class="btn btn-secondary btn-sm" id="btn-clear-data">清除</button>
                     </div>
-                    <div class="settings-item" style="flex-direction:column;align-items:stretch;gap:var(--space-sm);padding-top:var(--space-sm)">
+                    <div class="settings-item" id="settings-data-dir-item" style="flex-direction:column;align-items:stretch;gap:var(--space-sm);padding-top:var(--space-sm)">
                         <div class="settings-item-title"><i data-lucide="folder" style="width:18px;height:18px"></i> 数据目录</div>
                         <div class="settings-item-desc" id="settings-data-dir-desc" style="word-break:break-all">加载中...</div>
-                        <div style="display:flex;gap:8px;justify-content:flex-end">
+                        <div style="display:flex;gap:8px;justify-content:flex-end" id="settings-data-dir-actions">
                             <button class="btn btn-secondary btn-sm" id="btn-open-data-dir"><i data-lucide="external-link" style="width:14px;height:14px"></i> 打开文件夹</button>
                             <button class="btn btn-secondary btn-sm" id="btn-change-data-dir"><i data-lucide="folder-cog" style="width:14px;height:14px"></i> 更改目录</button>
                         </div>
@@ -2225,14 +2225,22 @@ function showSettingsScreen() {
         };
     }
 
-    // 数据目录（统一存储）：展示当前目录 + 打开 / 更改
+    // 数据目录（统一存储）：展示当前目录 + 打开 / 更改；商店版禁用并提示（PRD DIR-1）
     (async () => {
         try {
             const info = await api("/api/data_dir");
             const dirEl = $("#settings-data-dir-desc");
             if (dirEl) {
-                const tag = info.customized ? "（自定义）" : "（默认）";
-                dirEl.textContent = info.dir + " " + tag;
+                if (info.packaged) {
+                    dirEl.textContent = "商店版不支持修改数据目录，如需自定义请使用 GitHub 版";
+                    const actions = $("#settings-data-dir-actions");
+                    if (actions) actions.style.display = "none";
+                    const item = $("#settings-data-dir-item");
+                    if (item) item.style.opacity = "0.6";
+                } else {
+                    const tag = info.customized ? "（自定义）" : "（默认）";
+                    dirEl.textContent = info.dir + " " + tag;
+                }
             }
         } catch { /* 静默 */ }
     })();

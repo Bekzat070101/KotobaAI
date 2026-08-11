@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KOTOBA·AI 隐私政策</title>
+<style>
+  :root { --red: #F00000; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: #fff;
+    color: #2b2b2b;
+    line-height: 1.75;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 28px 72px; }
+  h1 { font-size: 28px; color: var(--red); margin-bottom: 6px; }
+  .update { color: #999; font-size: 13px; margin-bottom: 28px; }
+  h3 { font-size: 18px; margin: 28px 0 10px; color: #1f1f1f; }
+  p, li { font-size: 15px; margin-bottom: 8px; }
+  ul { padding-left: 22px; }
+  a { color: var(--red); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .highlight {
+    border-left: 4px solid var(--red);
+    background: #fff5f5;
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin-bottom: 14px;
+  }
+  .highlight strong { color: var(--red); }
+  .underline { text-decoration: underline; text-decoration-color: var(--red); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>KOTOBA·AI 隐私政策</h1>
+  <p class="update">最后更新：2026 年 7 月 23 日</p>
+
+  <div class="highlight">
+    <strong>核心要点</strong>
+    <p>KOTOBA·AI 是开源免费软件（GPL-3.0），所有数据 100% 本地存储、零云端上传；除向 DeepSeek API 发送学习内容用于 AI 生成与批改外，其余功能完全离线。</p>
+  </div>
+
+  <h3>1. 信息收集与使用</h3>
+  <p>KOTOBA·AI 是一款本地运行的桌面软件。<strong>我们不收集、不存储、不上传您的任何个人信息</strong>。您在软件中产生的所有数据（详见第 2 条）仅保存在您设备的本地文件系统中，我们无法访问，也不会访问。</p>
+  <p>当您使用 AI 出题和批改功能时，您输入的笔记内容和答题数据会被发送至 DeepSeek 的 API 服务器进行处理。这是唯一涉及数据传输的场景。有关 DeepSeek 如何处理您的数据，请参阅 <a href="https://platform.deepseek.com/privacy" target="_blank" rel="noopener">DeepSeek 隐私政策</a>。</p>
+
+  <h3>2. 本地存储的数据类型</h3>
+  <p>以下数据存储在您设备上（位于 KOTOBA·AI 数据目录中），<strong>均不会上传至任何服务器</strong>：</p>
+  <ul>
+    <li><strong>API 密钥：</strong>您的 DeepSeek API Key，用于调用 AI 服务</li>
+    <li><strong>学习笔记：</strong>您粘贴的语法笔记和单词列表</li>
+    <li><strong>答题记录：</strong>每道题的作答内容、AI 批改反馈和得分</li>
+    <li><strong>错题本：</strong>被自动收录的错误题目及错误详情</li>
+    <li><strong>知识库：</strong>已学习语法点的追踪数据和艾宾浩斯复习进度</li>
+    <li><strong>个人设置：</strong>级别偏好、主题选择、教材选择等配置</li>
+  </ul>
+
+  <h3>3. 数据安全</h3>
+  <p>您的数据安全完全取决于您对自己电脑的保护。<strong>您应当：</strong></p>
+  <ul>
+    <li>妥善保管您的 DeepSeek API Key，不要分享给他人</li>
+    <li>定期检查 DeepSeek 平台的 API 使用量，确保 Key 未被泄露</li>
+    <li>如发现 API Key 泄露，立即在 DeepSeek 平台重置 Key</li>
+  </ul>
+  <p>KOTOBA·AI 无法访问您的设备，因此<strong>无法为数据丢失或泄露承担责任</strong>。建议定期备份您的学习数据。</p>
+
+  <h3>4. 第三方服务</h3>
+  <p>KOTOBA·AI 仅依赖一个第三方服务：</p>
+  <ul>
+    <li><strong>DeepSeek API</strong>（深度求索）：用于 AI 题目生成和答案批改。当您使用这些功能时，笔记内容和答题数据会通过加密的 HTTPS 连接发送至 api.deepseek.com。DeepSeek 对其 API 调用数据的处理受其自身隐私政策约束。</li>
+  </ul>
+  <p>除此之外，KOTOBA·AI <strong>不集成任何</strong>：分析统计 SDK、广告网络、错误追踪服务、第三方登录、CDN（所有资源本地加载）、遥测或埋点系统。</p>
+
+  <h3>5. 用户权利</h3>
+  <p>您对您的数据拥有完全的控制权：</p>
+  <ul>
+    <li><strong>随时查看：</strong>所有数据以可读的 JSON 格式存储在本地，可用任何文本编辑器打开</li>
+    <li><strong>随时删除：</strong>通过设置页「清除数据」按钮一键删除，或手动删除对应 JSON 文件</li>
+    <li><strong>随时导出：</strong>练习总结可下载为 Markdown 文件；历史记录和错题本可通过复制 JSON 文件导出</li>
+    <li><strong>无需注册：</strong>本软件不要求创建账户、不收集邮箱、不需要手机号</li>
+  </ul>
+
+  <h3>6. 开源协议</h3>
+  <p>KOTOBA·AI 基于 <strong>GPL-3.0 许可证</strong>开源发布。您可以自由地：</p>
+  <ul>
+    <li>使用、复制、修改、分发本软件</li>
+    <li>将本软件用于个人学习目的</li>
+    <li>分发修改版，前提是同样采用 GPL-3.0 并提供源码</li>
+  </ul>
+  <p><strong>保护机制：</strong>GPL-3.0 是 copyleft（传染性）许可证——任何基于本软件的衍生或修改作品，若对外分发，必须同样以 GPL-3.0 开源并公开源码，从而防止闭源商业剽窃。完整的 GPL-3.0 许可证文本随软件一同分发（LICENSE 文件）。</p>
+
+  <h3>7. 免责声明</h3>
+  <p>本软件按「现状」提供，不提供任何明示或暗示的保证。在任何情况下，作者或版权持有人均不对因使用本软件而产生的任何索赔、损害或其他责任负责。</p>
+  <p>AI 生成的题目和批改内容仅供参考学习，不构成专业教育建议。用户应对自己的学习效果负责。</p>
+
+  <h3>8. 未成年人保护</h3>
+  <p>本软件为教育工具，内容不包含任何不适宜未成年人的信息。但我们建议未成年人在监护人指导下使用本软件及配置 API Key（涉及付费服务）。</p>
+
+  <h3>9. 隐私政策更新</h3>
+  <p>我们可能会不时更新本隐私政策。更新后的政策将随软件新版本一同发布。重大变更将在软件的更新日志中注明。</p>
+
+  <h3>10. 联系方式</h3>
+  <p>如对本隐私政策有任何疑问，请通过以下方式联系：</p>
+  <ul>
+    <li>GitHub Issues：<a href="https://github.com/Bekzat070101/KotobaAI/issues" target="_blank" rel="noopener">github.com/Bekzat070101/KotobaAI</a></li>
+    <li>在 GitHub 仓库中提交 Issue 或 Discussion</li>
+  </ul>
+</div>
+</body>
+</html>

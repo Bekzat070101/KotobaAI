@@ -34,6 +34,12 @@ dist-portable/
 dist-install/
 *.spec
 
+# MSIX store build artifacts (local only; scripts under msix/ are tracked)
+msix/staging/
+msix/*.msix
+msix/*.pfx
+msix/*.cer
+
 # IDE
 .vscode/
 .idea/

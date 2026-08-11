@@ -15,6 +15,37 @@ import shutil
 APP_NAME = "KOTOBA-AI"
 PTR_NAME = "data_dir.txt"          # 自定义目录指针，位于默认目录内
 
+_packaged = None
+
+
+def is_packaged():
+    """MSIX 打包环境检测：GetCurrentPackageFullName 能取到包名即处于商店版沙箱。结果缓存。
+
+    商店版（沙箱重定向 APPDATA）与 GitHub 版（自由路径）共用同一份逻辑，
+    仅数据目录自定义能力按 PACK-2 / DIR-1~3 降级。非 Windows 环境恒为 False。
+    """
+    global _packaged
+    if _packaged is None:
+        _packaged = _detect_packaged()
+    return _packaged
+
+
+def _detect_packaged():
+    try:
+        import ctypes
+        GetCurrentPackageFullName = ctypes.windll.kernel32.GetCurrentPackageFullName
+        GetCurrentPackageFullName.restype = ctypes.c_long
+        GetCurrentPackageFullName.argtypes = [
+            ctypes.POINTER(ctypes.c_int), ctypes.c_wchar_p,
+        ]
+        size = ctypes.c_int(0)
+        # 传空缓冲：若处于包内，返回 ERROR_INSUFFICIENT_BUFFER 并写入所需长度；
+        # 非包内返回 APPMODEL_ERROR_NO_PACKAGE，size 保持 0。
+        GetCurrentPackageFullName(ctypes.byref(size), None)
+        return size.value > 0
+    except Exception:
+        return False
+
 # 旧版本遗留数据（相对 cwd 路径），首次启动迁移到数据目录
 LEGACY_ITEMS = [
     "config.json", "progress.json", "learned_content.json",
@@ -37,7 +68,11 @@ def _ptr_path():
 
 
 def get_data_dir():
-    """解析当前数据目录：优先读自定义指针，否则用默认。实时解析不缓存。"""
+    """解析当前数据目录：优先读自定义指针，否则用默认。实时解析不缓存。
+
+    打包环境（商店版沙箱）直接返回默认目录，忽略指针（DIR-3：不触发自定义）。"""
+    if is_packaged():
+        return get_default_data_dir()
     try:
         with open(_ptr_path(), "r", encoding="utf-8") as f:
             p = f.read().strip()
@@ -61,12 +96,13 @@ def resolve(path):
 
 
 def get_data_dir_info():
-    """返回 {dir, customized, default}，供设置页展示。"""
+    """返回 {dir, customized, default, packaged}，供设置页展示 / 判定降级。"""
     d = get_data_dir()
     return {
         "dir": d,
         "customized": d != get_default_data_dir(),
         "default": get_default_data_dir(),
+        "packaged": is_packaged(),
     }
 
 
@@ -91,6 +127,8 @@ def _copy_tree_merge(src, dst):
 
 def set_data_dir(new_dir, migrate=True):
     """更改数据目录：先把旧目录数据迁移到新目录，再写指针。返回迁移文件数。"""
+    if is_packaged():
+        raise ValueError("商店版不支持修改数据目录，如需自定义请使用 GitHub 版")
     new_dir = os.path.expanduser((new_dir or "").strip())
     if not os.path.isabs(new_dir):
         raise ValueError("数据目录必须是绝对路径")
