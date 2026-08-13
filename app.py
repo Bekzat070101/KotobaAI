@@ -6,6 +6,21 @@ Flask 后端入口
 默认地址：http://127.0.0.1:5000
 """
 
+import io
+import sys
+
+# Windows 打包环境（PyInstaller / MSIX）下 stdout/stderr 会被重定向，
+# 编码跟随系统区域设置（美区为 cp1252 / charmap）。打印中文或日文字符
+# 会抛 UnicodeEncodeError，导致练习/答疑在非中文系统上直接崩溃（微软商店
+# 测试复现：'charmap' codec can't encode characters in position 6-9）。
+# 这里统一强制 UTF-8，并用 errors='replace' 兜底，任何场景都不再抛编码异常。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None:
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, io.UnsupportedOperation):
+            pass
+
 import json
 import os
 from datetime import datetime, timedelta
