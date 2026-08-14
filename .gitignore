@@ -40,6 +40,9 @@ msix/*.msix
 msix/*.pfx
 msix/*.cer
 
+# Build logs
+build_output.log
+
 # IDE
 .vscode/
 .idea/

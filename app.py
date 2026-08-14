@@ -9,17 +9,89 @@ Flask 后端入口
 import io
 import sys
 
-# Windows 打包环境（PyInstaller / MSIX）下 stdout/stderr 会被重定向，
-# 编码跟随系统区域设置（美区为 cp1252 / charmap）。打印中文或日文字符
-# 会抛 UnicodeEncodeError，导致练习/答疑在非中文系统上直接崩溃（微软商店
-# 测试复现：'charmap' codec can't encode characters in position 6-9）。
-# 这里统一强制 UTF-8，并用 errors='replace' 兜底，任何场景都不再抛编码异常。
-for _stream in (sys.stdout, sys.stderr):
-    if _stream is not None:
+
+class _SafeStream:
+    """永不抛编码异常的输出流包装。
+
+    PyInstaller / MSIX 打包后 stdout/stderr 的编码跟随系统区域（美区为
+    cp1252 / charmap），打印中文或日文字符会抛 UnicodeEncodeError（微软商店
+    测试复现：'charmap' codec can't encode characters in position 6-9）。
+    单靠 reconfigure() 在冻结环境下可能不生效（stdout 未必是可重配的标准
+    TextIOWrapper），因此这里再包一层：文本先按 UTF-8 编码成字节写到底层
+    buffer，任何失败都静默吞掉 —— print() 在任意环境下都不再崩溃（日志可能
+    乱码，但绝不中断功能）。
+    """
+
+    def __init__(self, raw):
+        self._raw = raw
+        self._buffer = getattr(raw, "buffer", None) if raw is not None else None
+
+    def write(self, s):
+        if s is None:
+            return 0
+        if isinstance(s, bytes):
+            s = s.decode("utf-8", "replace")
         try:
-            _stream.reconfigure(encoding="utf-8", errors="replace")
+            if self._buffer is not None:
+                self._buffer.write(s.encode("utf-8", "replace"))
+            elif self._raw is not None:
+                self._raw.write(s)
+            return len(s)
+        except Exception:
+            return len(s)
+
+    def flush(self):
+        try:
+            if self._raw is not None:
+                self._raw.flush()
+        except Exception:
+            pass
+
+    @property
+    def buffer(self):
+        return self._buffer
+
+    @property
+    def encoding(self):
+        return "utf-8"
+
+    @property
+    def errors(self):
+        return "replace"
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        try:
+            return self._raw.fileno() if self._raw is not None else -1
+        except Exception:
+            return -1
+
+    @property
+    def closed(self):
+        return False
+
+    def reconfigure(self, *args, **kwargs):
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+# 先把真实流切到 UTF-8（有效时控制台/日志可读），再包一层 _SafeStream 兜底，
+# 保证任何流（含 reconfigure 不生效的冻结环境）下 print 都不再抛编码异常。
+for _name in ("stdout", "stderr"):
+    _raw = getattr(sys, _name)
+    if _raw is not None:
+        try:
+            _raw.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError, io.UnsupportedOperation):
             pass
+    setattr(sys, _name, _SafeStream(_raw))
 
 import json
 import os
@@ -78,6 +150,10 @@ def handle_all_errors(e):
     # 保留 HTTP 异常状态码（如 413 请求体过大），非 HTTP 异常统一 500
     status = e.code if isinstance(e, HTTPException) else 500
     if request.path.startswith("/api/"):
+        # 兜底：任何残留的编码异常（charmap/cp1252 无法编码中文日文）都给用户
+        # 友好提示，而不是把原始 Python 报错直接甩到界面上（商店测试策略 10.1.2.10）
+        if isinstance(e, UnicodeEncodeError):
+            return jsonify({"error": "服务器内部错误：输出编码异常，请重试"}), status
         return jsonify({"error": f"服务器内部错误：{str(e)}"}), status
     # 非 API 路由（如静态文件）使用默认 HTML 处理
     return str(e), status

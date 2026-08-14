@@ -7,7 +7,7 @@
 ; 位于默认目录内 data_dir.txt），与安装目录完全分离。卸载时可选删除数据。
 
 #define MyAppName "KOTOBA·AI"
-#define MyAppVersion "4.0.1"
+#define MyAppVersion "4.0.3"
 #define MyAppPublisher "KOTOBA·AI"
 #define MyAppExeName "KOTOBA-AI.exe"
 
