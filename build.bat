@@ -61,7 +61,7 @@ echo   打包完成！
 echo   便携版：dist\KOTOBA-AI-portable.exe
 echo   便携版ZIP：dist\KOTOBA-AI-portable.zip
 echo   安装版目录：dist\KOTOBA-AI\
-echo   安装包：dist\KOTOBA-AI-Setup-4.0.1.exe（若已装 Inno Setup）
+echo   安装包：dist\KOTOBA-AI-Setup-*.exe（若已装 Inno Setup，版本见 setup.iss）
 echo ==========================================
 echo.
 pause
